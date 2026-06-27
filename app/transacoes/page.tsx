@@ -7,7 +7,7 @@ import { TransactionList } from "@/components/finance/transaction-list";
 import { TransactionSheet } from "@/components/finance/transaction-sheet";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { deleteTransaction, fetchCategories, fetchTransactions } from "@/lib/storage/queries";
+import { deleteTransaction, fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
 import type { Category, Transaction, TransactionType } from "@/lib/types";
 import { monthKey } from "@/lib/utils";
 

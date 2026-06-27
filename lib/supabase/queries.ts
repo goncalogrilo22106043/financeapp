@@ -5,51 +5,47 @@ import { getMonthRange } from "@/lib/finance";
 import { getSupabase } from "@/lib/supabase/client";
 import type { Category, Goal, Transaction, TransactionType } from "@/lib/types";
 
-export async function getCurrentUser() {
-  const supabase = getSupabase();
-  const { data, error } = await supabase.auth.getUser();
-  if (error) throw error;
-  return data.user;
-}
+const sharedUserId = "main";
 
-export async function ensureProfileAndDefaults() {
+async function ensureDefaults() {
   const supabase = getSupabase();
-  const user = await getCurrentUser();
-  if (!user) return null;
 
   await supabase.from("profiles").upsert({
-    id: user.id,
-    full_name: user.user_metadata?.full_name || user.email?.split("@")[0] || "Gonçalo"
+    id: sharedUserId,
+    full_name: "Gonçalo"
   });
 
-  const { data: existing } = await supabase
+  const { data: existing, error } = await supabase
     .from("categories")
     .select("name,type")
-    .eq("user_id", user.id);
+    .eq("user_id", sharedUserId);
 
-  const keys = new Set((existing || []).map((category) => `${category.type}:${category.name}`));
+  if (error) throw error;
+
+  const existingKeys = new Set((existing || []).map((category) => `${category.type}:${category.name}`));
   const defaults = [
     ...incomeCategories.map((name) => ({ name, type: "income" as TransactionType })),
     ...expenseCategories.map((name) => ({ name, type: "expense" as TransactionType }))
-  ].filter((category) => !keys.has(`${category.type}:${category.name}`));
+  ].filter((category) => !existingKeys.has(`${category.type}:${category.name}`));
 
   if (defaults.length) {
-    await supabase.from("categories").insert(
+    const { error: insertError } = await supabase.from("categories").insert(
       defaults.map((category) => ({
         ...category,
-        user_id: user.id
+        user_id: sharedUserId
       }))
     );
+    if (insertError) throw insertError;
   }
-
-  return user;
 }
 
 export async function fetchCategories() {
+  await ensureDefaults();
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("categories")
     .select("*")
+    .eq("user_id", sharedUserId)
     .order("type", { ascending: false })
     .order("name", { ascending: true });
 
@@ -58,11 +54,13 @@ export async function fetchCategories() {
 }
 
 export async function fetchTransactions(month: string) {
+  await ensureDefaults();
   const supabase = getSupabase();
   const { start, end } = getMonthRange(month);
   const { data, error } = await supabase
     .from("transactions")
     .select("*, categories(id,name,type)")
+    .eq("user_id", sharedUserId)
     .gte("date", start)
     .lte("date", end)
     .order("date", { ascending: false });
@@ -72,10 +70,12 @@ export async function fetchTransactions(month: string) {
 }
 
 export async function fetchAllTransactions() {
+  await ensureDefaults();
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("transactions")
     .select("*, categories(id,name,type)")
+    .eq("user_id", sharedUserId)
     .order("date", { ascending: true });
 
   if (error) throw error;
@@ -92,12 +92,10 @@ export async function saveTransaction(input: {
   date: string;
 }) {
   const supabase = getSupabase();
-  const user = await getCurrentUser();
-  if (!user) throw new Error("Sessão expirada.");
-
+  await ensureDefaults();
   const payload = {
     ...input,
-    user_id: user.id,
+    user_id: sharedUserId,
     description: input.description.trim()
   };
 
@@ -109,14 +107,24 @@ export async function saveTransaction(input: {
 }
 
 export async function deleteTransaction(id: string) {
+  await ensureDefaults();
   const supabase = getSupabase();
-  const { error } = await supabase.from("transactions").delete().eq("id", id);
+  const { error } = await supabase
+    .from("transactions")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", sharedUserId);
   if (error) throw error;
 }
 
 export async function fetchGoals() {
+  await ensureDefaults();
   const supabase = getSupabase();
-  const { data, error } = await supabase.from("goals").select("*").order("created_at");
+  const { data, error } = await supabase
+    .from("goals")
+    .select("*")
+    .eq("user_id", sharedUserId)
+    .order("created_at");
   if (error) throw error;
   return data as Goal[];
 }
@@ -128,12 +136,11 @@ export async function saveGoal(input: {
   current_amount: number;
 }) {
   const supabase = getSupabase();
-  const user = await getCurrentUser();
-  if (!user) throw new Error("Sessão expirada.");
+  await ensureDefaults();
 
   const { error } = input.id
-    ? await supabase.from("goals").update(input).eq("id", input.id)
-    : await supabase.from("goals").insert({ ...input, user_id: user.id });
+    ? await supabase.from("goals").update(input).eq("id", input.id).eq("user_id", sharedUserId)
+    : await supabase.from("goals").insert({ ...input, user_id: sharedUserId });
 
   if (error) throw error;
 }

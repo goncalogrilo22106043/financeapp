@@ -1,23 +1,28 @@
 create extension if not exists "pgcrypto";
 
-create table if not exists public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
+drop table if exists public.transactions;
+drop table if exists public.categories;
+drop table if exists public.goals;
+drop table if exists public.profiles;
+
+create table public.profiles (
+  id text primary key default 'main',
   full_name text,
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.categories (
+create table public.categories (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
+  user_id text not null default 'main' references public.profiles(id) on delete cascade,
   name text not null,
   type text not null check (type in ('income', 'expense')),
   created_at timestamptz not null default now(),
   unique (user_id, name, type)
 );
 
-create table if not exists public.transactions (
+create table public.transactions (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
+  user_id text not null default 'main' references public.profiles(id) on delete cascade,
   type text not null check (type in ('income', 'expense')),
   amount numeric(12, 2) not null check (amount >= 0),
   category_id uuid references public.categories(id) on delete set null,
@@ -27,84 +32,103 @@ create table if not exists public.transactions (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.goals (
+create table public.goals (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
+  user_id text not null default 'main' references public.profiles(id) on delete cascade,
   title text not null,
   target_amount numeric(12, 2) not null check (target_amount >= 0),
   current_amount numeric(12, 2) not null default 0 check (current_amount >= 0),
   created_at timestamptz not null default now()
 );
 
+insert into public.profiles (id, full_name)
+values ('main', 'Gonçalo')
+on conflict (id) do update set full_name = excluded.full_name;
+
 alter table public.profiles enable row level security;
 alter table public.categories enable row level security;
 alter table public.transactions enable row level security;
 alter table public.goals enable row level security;
 
-create policy "profiles_select_own"
+create policy "shared_profile_read"
 on public.profiles for select
-using (auth.uid() = id);
+to anon
+using (id = 'main');
 
-create policy "profiles_insert_own"
+create policy "shared_profile_write"
 on public.profiles for insert
-with check (auth.uid() = id);
+to anon
+with check (id = 'main');
 
-create policy "profiles_update_own"
+create policy "shared_profile_update"
 on public.profiles for update
-using (auth.uid() = id)
-with check (auth.uid() = id);
+to anon
+using (id = 'main')
+with check (id = 'main');
 
-create policy "categories_select_own"
+create policy "shared_categories_read"
 on public.categories for select
-using (auth.uid() = user_id);
+to anon
+using (user_id = 'main');
 
-create policy "categories_insert_own"
+create policy "shared_categories_insert"
 on public.categories for insert
-with check (auth.uid() = user_id);
+to anon
+with check (user_id = 'main');
 
-create policy "categories_update_own"
+create policy "shared_categories_update"
 on public.categories for update
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+to anon
+using (user_id = 'main')
+with check (user_id = 'main');
 
-create policy "categories_delete_own"
+create policy "shared_categories_delete"
 on public.categories for delete
-using (auth.uid() = user_id);
+to anon
+using (user_id = 'main');
 
-create policy "transactions_select_own"
+create policy "shared_transactions_read"
 on public.transactions for select
-using (auth.uid() = user_id);
+to anon
+using (user_id = 'main');
 
-create policy "transactions_insert_own"
+create policy "shared_transactions_insert"
 on public.transactions for insert
-with check (auth.uid() = user_id);
+to anon
+with check (user_id = 'main');
 
-create policy "transactions_update_own"
+create policy "shared_transactions_update"
 on public.transactions for update
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+to anon
+using (user_id = 'main')
+with check (user_id = 'main');
 
-create policy "transactions_delete_own"
+create policy "shared_transactions_delete"
 on public.transactions for delete
-using (auth.uid() = user_id);
+to anon
+using (user_id = 'main');
 
-create policy "goals_select_own"
+create policy "shared_goals_read"
 on public.goals for select
-using (auth.uid() = user_id);
+to anon
+using (user_id = 'main');
 
-create policy "goals_insert_own"
+create policy "shared_goals_insert"
 on public.goals for insert
-with check (auth.uid() = user_id);
+to anon
+with check (user_id = 'main');
 
-create policy "goals_update_own"
+create policy "shared_goals_update"
 on public.goals for update
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+to anon
+using (user_id = 'main')
+with check (user_id = 'main');
 
-create policy "goals_delete_own"
+create policy "shared_goals_delete"
 on public.goals for delete
-using (auth.uid() = user_id);
+to anon
+using (user_id = 'main');
 
-create index if not exists transactions_user_date_idx on public.transactions(user_id, date desc);
-create index if not exists categories_user_type_idx on public.categories(user_id, type);
-create index if not exists goals_user_idx on public.goals(user_id);
+create index transactions_user_date_idx on public.transactions(user_id, date desc);
+create index categories_user_type_idx on public.categories(user_id, type);
+create index goals_user_idx on public.goals(user_id);

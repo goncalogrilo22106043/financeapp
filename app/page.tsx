@@ -11,7 +11,7 @@ import { TransactionSheet } from "@/components/finance/transaction-sheet";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { summarize } from "@/lib/finance";
-import { fetchCategories, fetchTransactions } from "@/lib/storage/queries";
+import { fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
 import type { Category, Transaction } from "@/lib/types";
 import { monthKey, monthLabel } from "@/lib/utils";
 

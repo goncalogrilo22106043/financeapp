@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
-import { fetchCategories, fetchGoals, saveGoal } from "@/lib/storage/queries";
+import { fetchCategories, fetchGoals, saveGoal } from "@/lib/supabase/queries";
 import type { Category, Goal } from "@/lib/types";
 import { euros } from "@/lib/utils";
 

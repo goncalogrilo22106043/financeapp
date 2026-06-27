@@ -2,22 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { AuthGuard } from "@/components/auth-guard";
 import { MonthPicker } from "@/components/finance/month-picker";
 import { TransactionList } from "@/components/finance/transaction-list";
 import { TransactionSheet } from "@/components/finance/transaction-sheet";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { deleteTransaction, fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
+import { deleteTransaction, fetchCategories, fetchTransactions } from "@/lib/storage/queries";
 import type { Category, Transaction, TransactionType } from "@/lib/types";
 import { monthKey } from "@/lib/utils";
 
 export default function TransactionsPage() {
-  return (
-    <AuthGuard>
-      <Transactions />
-    </AuthGuard>
-  );
+  return <Transactions />;
 }
 
 function Transactions() {

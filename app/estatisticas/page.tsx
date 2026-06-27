@@ -16,22 +16,17 @@ import {
   YAxis
 } from "recharts";
 import { AppShell } from "@/components/app-shell";
-import { AuthGuard } from "@/components/auth-guard";
 import { MonthPicker } from "@/components/finance/month-picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { chartPalette } from "@/lib/constants";
 import { summarize, totalsByCategory } from "@/lib/finance";
-import { fetchAllTransactions, fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
+import { fetchAllTransactions, fetchCategories, fetchTransactions } from "@/lib/storage/queries";
 import type { Category, Transaction } from "@/lib/types";
 import { addMonths, euros, monthKey, monthLabel } from "@/lib/utils";
 import { TransactionSheet } from "@/components/finance/transaction-sheet";
 
 export default function StatsPage() {
-  return (
-    <AuthGuard>
-      <Stats />
-    </AuthGuard>
-  );
+  return <Stats />;
 }
 
 function Stats() {

@@ -2,22 +2,17 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { AuthGuard } from "@/components/auth-guard";
 import { TransactionSheet } from "@/components/finance/transaction-sheet";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
-import { fetchCategories, fetchGoals, saveGoal } from "@/lib/supabase/queries";
+import { fetchCategories, fetchGoals, saveGoal } from "@/lib/storage/queries";
 import type { Category, Goal } from "@/lib/types";
 import { euros } from "@/lib/utils";
 
 export default function GoalsPage() {
-  return (
-    <AuthGuard>
-      <Goals />
-    </AuthGuard>
-  );
+  return <Goals />;
 }
 
 function Goals() {

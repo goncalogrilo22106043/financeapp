@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Sheet } from "@/components/ui/sheet";
 import { paymentMethods } from "@/lib/constants";
-import { saveTransaction } from "@/lib/supabase/queries";
+import { saveTransaction } from "@/lib/storage/queries";
 import type { Category, Transaction, TransactionType } from "@/lib/types";
 import { cn, dateForInput } from "@/lib/utils";
 

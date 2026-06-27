@@ -1,11 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, Home, LogOut, PiggyBank, Plus, ReceiptText, Target } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { BarChart3, Home, PiggyBank, Plus, ReceiptText, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { getSupabase } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -23,12 +22,6 @@ export function AppShell({
   onNewTransaction?: () => void;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
-
-  async function signOut() {
-    await getSupabase().auth.signOut();
-    router.replace("/login");
-  }
 
   return (
     <div className="min-h-dvh bg-background">
@@ -51,9 +44,6 @@ export function AppShell({
               </Button>
             ) : null}
             <ThemeToggle />
-            <Button aria-label="Terminar sessão" size="icon" variant="secondary" onClick={signOut}>
-              <LogOut className="h-5 w-5" />
-            </Button>
           </div>
         </div>
       </header>

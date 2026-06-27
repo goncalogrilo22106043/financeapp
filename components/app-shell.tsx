@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Home, PiggyBank, Plus, ReceiptText, Target } from "lucide-react";
+import { BarChart3, Home, PiggyBank, Plus, ReceiptText, Tags, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/", label: "Início", icon: Home },
   { href: "/transacoes", label: "Transações", icon: ReceiptText },
+  { href: "/categorias", label: "Categorias", icon: Tags },
   { href: "/estatisticas", label: "Estatísticas", icon: BarChart3 },
   { href: "/objetivos", label: "Objetivos", icon: Target }
 ];
@@ -61,7 +62,7 @@ export function AppShell({
       ) : null}
 
       <nav className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/90 px-3 pt-2 backdrop-blur-xl md:hidden">
-        <div className="grid grid-cols-4 gap-1">
+        <div className="grid grid-cols-5 gap-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;
@@ -69,7 +70,7 @@ export function AppShell({
               <Link
                 key={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-1 rounded-2xl px-2 py-2 text-xs font-medium text-muted-foreground",
+                  "flex flex-col items-center gap-1 rounded-2xl px-1 py-2 text-[10px] font-medium text-muted-foreground",
                   active && "bg-foreground text-background"
                 )}
                 href={item.href}

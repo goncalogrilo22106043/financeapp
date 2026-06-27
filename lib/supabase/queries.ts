@@ -22,11 +22,12 @@ async function ensureDefaults() {
 
   if (error) throw error;
 
-  const existingKeys = new Set((existing || []).map((category) => `${category.type}:${category.name}`));
+  if (existing?.length) return;
+
   const defaults = [
     ...incomeCategories.map((name) => ({ name, type: "income" as TransactionType })),
     ...expenseCategories.map((name) => ({ name, type: "expense" as TransactionType }))
-  ].filter((category) => !existingKeys.has(`${category.type}:${category.name}`));
+  ];
 
   if (defaults.length) {
     const { error: insertError } = await supabase.from("categories").insert(
@@ -51,6 +52,42 @@ export async function fetchCategories() {
 
   if (error) throw error;
   return data as Category[];
+}
+
+export async function saveCategory(input: {
+  id?: string;
+  name: string;
+  type: TransactionType;
+}) {
+  await ensureDefaults();
+  const supabase = getSupabase();
+  const payload = {
+    name: input.name.trim(),
+    type: input.type,
+    user_id: sharedUserId
+  };
+
+  const { error } = input.id
+    ? await supabase
+        .from("categories")
+        .update(payload)
+        .eq("id", input.id)
+        .eq("user_id", sharedUserId)
+    : await supabase.from("categories").insert(payload);
+
+  if (error) throw error;
+}
+
+export async function deleteCategory(id: string) {
+  await ensureDefaults();
+  const supabase = getSupabase();
+  const { error } = await supabase
+    .from("categories")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", sharedUserId);
+
+  if (error) throw error;
 }
 
 export async function fetchTransactions(month: string) {

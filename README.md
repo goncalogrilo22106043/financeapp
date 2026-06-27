@@ -9,6 +9,7 @@ App web/PWA de finanças pessoais em português de Portugal, construída com Nex
 - Ecrã inicial mobile-first com saldo do mês, receitas, despesas e poupança
 - Bottom sheet rápida para adicionar receitas/despesas
 - Página de transações com filtros, pesquisa, edição e remoção
+- Página de categorias para criar, editar e apagar categorias
 - Página de estatísticas com gráficos simples
 - Página de objetivos financeiros
 - PWA-ready com `manifest.json`, ícone e service worker

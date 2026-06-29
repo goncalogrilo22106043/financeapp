@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { Upload } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { MonthPicker } from "@/components/finance/month-picker";
 import { TransactionList } from "@/components/finance/transaction-list";
 import { TransactionSheet } from "@/components/finance/transaction-sheet";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { deleteTransaction, fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
 import type { Category, Transaction, TransactionType } from "@/lib/types";
 import { monthKey } from "@/lib/utils";
@@ -24,14 +27,20 @@ function Transactions() {
   const [search, setSearch] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
+  const [error, setError] = useState("");
 
   async function load() {
-    const [nextCategories, nextTransactions] = await Promise.all([
-      fetchCategories(),
-      fetchTransactions(month)
-    ]);
-    setCategories(nextCategories);
-    setTransactions(nextTransactions);
+    setError("");
+    try {
+      const [nextCategories, nextTransactions] = await Promise.all([
+        fetchCategories(),
+        fetchTransactions(month)
+      ]);
+      setCategories(nextCategories);
+      setTransactions(nextTransactions);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não consegui carregar as transações.");
+    }
   }
 
   useEffect(() => {
@@ -61,9 +70,17 @@ function Transactions() {
 
   return (
     <AppShell onNewTransaction={openNew}>
-      <div className="mb-6">
-        <p className="text-muted-foreground">Movimentos</p>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight">Transações</h1>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <p className="text-muted-foreground">Movimentos</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight">Transações</h1>
+        </div>
+        <Button asChild size="sm" variant="secondary">
+          <Link href="/importar">
+            <Upload className="h-4 w-4" />
+            Importar
+          </Link>
+        </Button>
       </div>
 
       <div className="mb-4">
@@ -90,6 +107,12 @@ function Transactions() {
           ))}
         </Select>
       </div>
+
+      {error ? (
+        <div className="mb-4 rounded-2xl bg-rose-500/10 p-4 text-sm font-medium text-rose-700 dark:text-rose-300">
+          {error}
+        </div>
+      ) : null}
 
       <TransactionList
         transactions={filtered}

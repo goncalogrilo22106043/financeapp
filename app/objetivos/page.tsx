@@ -22,11 +22,17 @@ function Goals() {
   const [target, setTarget] = useState("40000");
   const [current, setCurrent] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [error, setError] = useState("");
 
   async function load() {
-    const [nextCategories, nextGoals] = await Promise.all([fetchCategories(), fetchGoals()]);
-    setCategories(nextCategories);
-    setGoals(nextGoals);
+    setError("");
+    try {
+      const [nextCategories, nextGoals] = await Promise.all([fetchCategories(), fetchGoals()]);
+      setCategories(nextCategories);
+      setGoals(nextGoals);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não consegui carregar os objetivos.");
+    }
   }
 
   useEffect(() => {
@@ -54,6 +60,11 @@ function Goals() {
       </div>
 
       <div className="mb-5 grid gap-3">
+        {error ? (
+          <div className="rounded-2xl bg-rose-500/10 p-4 text-sm font-medium text-rose-700 dark:text-rose-300">
+            {error}
+          </div>
+        ) : null}
         {goals.length ? (
           goals.map((goal) => <GoalCard goal={goal} key={goal.id} />)
         ) : (

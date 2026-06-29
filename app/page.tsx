@@ -26,17 +26,24 @@ function Dashboard() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const summary = useMemo(() => summarize(transactions), [transactions]);
 
   async function load() {
     setLoading(true);
-    const [nextCategories, nextTransactions] = await Promise.all([
-      fetchCategories(),
-      fetchTransactions(month)
-    ]);
-    setCategories(nextCategories);
-    setTransactions(nextTransactions);
-    setLoading(false);
+    setError("");
+    try {
+      const [nextCategories, nextTransactions] = await Promise.all([
+        fetchCategories(),
+        fetchTransactions(month)
+      ]);
+      setCategories(nextCategories);
+      setTransactions(nextTransactions);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não consegui carregar os dados.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -57,6 +64,12 @@ function Dashboard() {
       </div>
 
       <SummaryCards summary={summary} />
+
+      {error ? (
+        <Card className="mt-5 border-rose-500/30 bg-rose-500/10 p-4 text-sm font-medium text-rose-700 dark:text-rose-300">
+          {error}
+        </Card>
+      ) : null}
 
       <Card className="mt-5">
         <CardHeader className="flex-row items-center justify-between">

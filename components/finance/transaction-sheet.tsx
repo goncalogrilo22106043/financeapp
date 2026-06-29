@@ -76,6 +76,7 @@ export function TransactionSheet({
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (!form.category_id) return;
     setSaving(true);
     try {
       await saveTransaction({
@@ -145,6 +146,11 @@ export function TransactionSheet({
               </option>
             ))}
           </Select>
+          {!visibleCategories.length ? (
+            <p className="mt-2 text-sm text-rose-600">
+              Cria primeiro uma categoria para este tipo de transação.
+            </p>
+          ) : null}
         </label>
 
         <label className="block">
@@ -180,7 +186,7 @@ export function TransactionSheet({
           </label>
         </div>
 
-        <Button className="w-full" disabled={saving} size="lg" type="submit">
+        <Button className="w-full" disabled={saving || !form.category_id} size="lg" type="submit">
           {saving ? "A guardar..." : "Guardar"}
         </Button>
       </form>

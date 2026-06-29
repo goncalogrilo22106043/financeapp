@@ -35,16 +35,22 @@ function Stats() {
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [error, setError] = useState("");
 
   async function load() {
-    const [nextCategories, monthTransactions, everyTransaction] = await Promise.all([
-      fetchCategories(),
-      fetchTransactions(month),
-      fetchAllTransactions()
-    ]);
-    setCategories(nextCategories);
-    setTransactions(monthTransactions);
-    setAllTransactions(everyTransaction);
+    setError("");
+    try {
+      const [nextCategories, monthTransactions, everyTransaction] = await Promise.all([
+        fetchCategories(),
+        fetchTransactions(month),
+        fetchAllTransactions()
+      ]);
+      setCategories(nextCategories);
+      setTransactions(monthTransactions);
+      setAllTransactions(everyTransaction);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não consegui carregar as estatísticas.");
+    }
   }
 
   useEffect(() => {
@@ -78,6 +84,12 @@ function Stats() {
       <div className="mb-5">
         <MonthPicker month={month} onChange={setMonth} />
       </div>
+
+      {error ? (
+        <div className="mb-4 rounded-2xl bg-rose-500/10 p-4 text-sm font-medium text-rose-700 dark:text-rose-300">
+          {error}
+        </div>
+      ) : null}
 
       <div className="mb-4 grid gap-3 md:grid-cols-2">
         <Insight title="Onde mais gastaste" value={mostSpent ? mostSpent.name : "Sem despesas"} detail={mostSpent ? euros(mostSpent.value) : "0€"} />

@@ -5,9 +5,17 @@ export function getMonthRange(month: string) {
   const start = new Date(year, monthIndex - 1, 1);
   const end = new Date(year, monthIndex, 0);
   return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10)
+    start: formatDate(start),
+    end: formatDate(end)
   };
+}
+
+function formatDate(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
 }
 
 export function summarize(transactions: Transaction[]): FinanceSummary {

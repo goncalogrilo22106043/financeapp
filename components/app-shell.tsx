@@ -8,11 +8,11 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { href: "/", label: "Início", icon: Home },
-  { href: "/transacoes", label: "Transações", icon: ReceiptText },
-  { href: "/categorias", label: "Categorias", icon: Tags },
-  { href: "/estatisticas", label: "Estatísticas", icon: BarChart3 },
-  { href: "/objetivos", label: "Objetivos", icon: Target }
+  { href: "/", label: "Início", mobileLabel: "Início", icon: Home },
+  { href: "/transacoes", label: "Transações", mobileLabel: "Mov.", icon: ReceiptText },
+  { href: "/categorias", label: "Categorias", mobileLabel: "Cat.", icon: Tags },
+  { href: "/estatisticas", label: "Estatísticas", mobileLabel: "Stats", icon: BarChart3 },
+  { href: "/objetivos", label: "Objetivos", mobileLabel: "Obj.", icon: Target }
 ];
 
 export function AppShell({
@@ -49,7 +49,7 @@ export function AppShell({
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 pb-28 pt-5 md:px-8 md:pb-10">{children}</main>
+      <main className="mx-auto max-w-5xl px-4 pb-28 pt-5 md:px-8">{children}</main>
 
       {onNewTransaction ? (
         <Button
@@ -76,7 +76,7 @@ export function AppShell({
                 href={item.href}
               >
                 <Icon className="h-5 w-5" />
-                {item.label}
+                {item.mobileLabel}
               </Link>
             );
           })}

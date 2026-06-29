@@ -14,7 +14,7 @@ export function euros(value: number) {
 }
 
 export function monthKey(date = new Date()) {
-  return date.toISOString().slice(0, 7);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
 export function monthLabel(key: string) {
@@ -33,5 +33,9 @@ export function addMonths(key: string, amount: number) {
 }
 
 export function dateForInput(date = new Date()) {
-  return date.toISOString().slice(0, 10);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
 }

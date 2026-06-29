@@ -34,9 +34,15 @@ export default function CategoriesPage() {
   const [transactionSheetOpen, setTransactionSheetOpen] = useState(false);
   const [form, setForm] = useState<CategoryForm>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   async function load() {
-    setCategories(await fetchCategories());
+    setError("");
+    try {
+      setCategories(await fetchCategories());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não consegui carregar as categorias.");
+    }
   }
 
   useEffect(() => {
@@ -100,6 +106,11 @@ export default function CategoriesPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
+        {error ? (
+          <div className="rounded-2xl bg-rose-500/10 p-4 text-sm font-medium text-rose-700 dark:text-rose-300 md:col-span-2">
+            {error}
+          </div>
+        ) : null}
         <CategorySection
           categories={expenses}
           title="Despesas"

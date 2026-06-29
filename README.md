@@ -10,6 +10,7 @@ App web/PWA de finanças pessoais em português de Portugal, construída com Nex
 - Bottom sheet rápida para adicionar receitas/despesas
 - Página de transações com filtros, pesquisa, edição e remoção
 - Página de categorias para criar, editar e apagar categorias
+- Importador CSV da Revolut para despesas em lote
 - Página de estatísticas com gráficos simples
 - Página de objetivos financeiros
 - PWA-ready com `manifest.json`, ícone e service worker
@@ -77,3 +78,14 @@ supabase/schema.sql   Base de dados e políticas RLS
 Não há ecrã de login. Todos os dispositivos usam o mesmo perfil partilhado `main`, por isso o que adicionas no PC aparece no telemóvel e vice-versa.
 
 Como não há login nem PIN, qualquer pessoa com acesso ao link da app pode ver e alterar os dados. Para uso pessoal, mantém o link privado.
+
+## Importar despesas da Revolut
+
+1. Na Revolut, exporta o extrato/movimentos em CSV.
+2. Na app, abre `Transações`.
+3. Clica em `Importar`.
+4. Escolhe o ficheiro CSV.
+5. Confirma a pré-visualização.
+6. Clica em `Importar despesas`.
+
+A app importa apenas movimentos negativos/despesas, cria categorias de despesa com os nomes vindos da Revolut e ignora duplicados simples por data, valor, descrição e categoria.

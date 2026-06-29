@@ -54,6 +54,32 @@ export async function fetchCategories() {
   return data as Category[];
 }
 
+async function getOrCreateExpenseCategory(name: string) {
+  const cleanName = name.trim() || "Revolut";
+  const categories = await fetchCategories();
+  const existing = categories.find(
+    (category) =>
+      category.type === "expense" &&
+      category.name.localeCompare(cleanName, "pt-PT", { sensitivity: "accent" }) === 0
+  );
+
+  if (existing) return existing;
+
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("categories")
+    .insert({
+      name: cleanName,
+      type: "expense",
+      user_id: sharedUserId
+    })
+    .select("*")
+    .single();
+
+  if (error) throw error;
+  return data as Category;
+}
+
 export async function saveCategory(input: {
   id?: string;
   name: string;
@@ -152,6 +178,65 @@ export async function deleteTransaction(id: string) {
     .eq("id", id)
     .eq("user_id", sharedUserId);
   if (error) throw error;
+}
+
+export async function importExpenseTransactions(
+  rows: Array<{
+    amount: number;
+    category: string;
+    description: string;
+    date: string;
+    payment_method?: string;
+  }>
+) {
+  await ensureDefaults();
+  const supabase = getSupabase();
+  const existing = await fetchAllTransactions();
+  const existingKeys = new Set(
+    existing.map((transaction) =>
+      [
+        transaction.date,
+        Number(transaction.amount).toFixed(2),
+        transaction.description?.trim().toLowerCase() || "",
+        transaction.categories?.name?.trim().toLowerCase() || ""
+      ].join("|")
+    )
+  );
+
+  let inserted = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const category = await getOrCreateExpenseCategory(row.category);
+    const amount = Math.abs(Number(row.amount));
+    const key = [
+      row.date,
+      amount.toFixed(2),
+      row.description.trim().toLowerCase(),
+      category.name.trim().toLowerCase()
+    ].join("|");
+
+    if (existingKeys.has(key)) {
+      skipped += 1;
+      continue;
+    }
+
+    const { error } = await supabase.from("transactions").insert({
+      user_id: sharedUserId,
+      type: "expense",
+      amount,
+      category_id: category.id,
+      description: row.description.trim() || "Despesa Revolut",
+      payment_method: row.payment_method || "Revolut",
+      date: row.date
+    });
+
+    if (error) throw error;
+    existingKeys.add(key);
+    inserted += 1;
+  }
+
+  return { inserted, skipped };
 }
 
 export async function fetchGoals() {

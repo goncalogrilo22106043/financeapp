@@ -185,32 +185,46 @@ function findHeaderRow(records: string[][]) {
     const normalized = row.map(normalizeHeader);
     const joined = normalized.join(" ");
     const hasDate = joined.includes("date") || joined.includes("data");
-    const hasAmount = joined.includes("amount") || joined.includes("valor") || joined.includes("paid out");
+    const hasAmount =
+      joined.includes("amount") ||
+      joined.includes("valor") ||
+      joined.includes("montante") ||
+      joined.includes("paid out");
     return hasDate && hasAmount;
   });
 }
 
 function toExpense(row: Record<string, string>): ParsedExpense | null {
-  const amountMatch = pickMatch(row, ["amount", "valor", "paid out", "money out", "out"]);
+  const amountMatch = pickMatch(row, ["amount", "valor", "montante", "paid out", "money out", "out"]);
   let amount = parseMoney(amountMatch.value);
   if (amountMatch.key.includes("paid out") || amountMatch.key.includes("money out")) {
     amount = -Math.abs(amount);
   }
   if (!Number.isFinite(amount) || amount >= 0) return null;
 
-  const state = pick(row, ["state", "estado", "status"]);
-  if (state && !["completed", "complete", "concluido", "concluído"].includes(state.toLowerCase())) {
+  const state = normalizeValue(pick(row, ["state", "estado", "status"]));
+  if (state && !["completed", "complete", "concluido", "concluida"].includes(state)) {
     return null;
   }
 
-  const dateRaw = pick(row, ["completed date", "started date", "date", "data", "created at"]);
+  const dateRaw = pick(row, [
+    "completed date",
+    "data de conclusao",
+    "data de conclusão",
+    "started date",
+    "data de inicio",
+    "data de início",
+    "date",
+    "data",
+    "created at"
+  ]);
   const date = parseDate(dateRaw);
   if (!date) return null;
 
   return {
     amount: Math.abs(amount),
-    category: pick(row, ["category", "categoria", "expense category", "merchant category"]) || "Revolut",
-    description: pick(row, ["description", "descrição", "merchant", "name", "counterparty"]) || "Despesa Revolut",
+    category: pick(row, ["category", "categoria", "expense category", "merchant category", "tipo"]) || "Revolut",
+    description: pick(row, ["description", "descricao", "descrição", "merchant", "name", "counterparty"]) || "Despesa Revolut",
     date,
     payment_method: "Revolut"
   };
@@ -269,7 +283,17 @@ function normalizeHeader(value: string) {
   return value
     .replace(/^\uFEFF/, "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeValue(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function pick(row: Record<string, string>, keys: string[]) {

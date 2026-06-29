@@ -61,7 +61,7 @@ export default function ImportPage() {
   const [importing, setImporting] = useState(false);
 
   const selectedRows = useMemo(
-    () => rows.filter((row) => row.selected && !row.ignoredReason),
+    () => rows.filter((row) => row.selected),
     [rows]
   );
   const selectedExpenses = useMemo(
@@ -121,7 +121,7 @@ export default function ImportPage() {
 
   function selectAll(value: boolean) {
     setRows((current) =>
-      current.map((row) => (row.ignoredReason ? row : { ...row, selected: value }))
+      current.map((row) => ({ ...row, selected: value }))
     );
   }
 
@@ -212,7 +212,6 @@ export default function ImportPage() {
                   <input
                     checked={row.selected}
                     className="mt-1 h-5 w-5 accent-emerald-600"
-                    disabled={Boolean(row.ignoredReason)}
                     type="checkbox"
                     onChange={(event) => updateRow(row.id, { selected: event.target.checked })}
                   />
@@ -227,7 +226,7 @@ export default function ImportPage() {
                     <p className="mt-1 text-xs text-muted-foreground">
                       {row.date} · {row.category}
                     </p>
-                    {row.ignoredReason ? (
+                    {row.ignoredReason && !row.selected ? (
                       <p className="mt-2 rounded-xl bg-muted px-3 py-2 text-xs font-medium text-muted-foreground">
                         Ignorada automaticamente: {row.ignoredReason}
                       </p>
@@ -441,7 +440,7 @@ function toMillenniumRow(
 
 function findMoneyMatches(line: string) {
   const matches = Array.from(
-    line.matchAll(/(?:[-+]\s*)?\d{1,3}(?:[ .]\d{3})*[,.]\d{2}\s*(?:[-+]|EUR|€|D|C|CR|DR)?/gi)
+    line.matchAll(/(?<![A-Z0-9])(?:[-+]\s*)?\d{1,3}(?:[ .]\d{3})*[,.]\d{2}\s*(?:[-+]|EUR|€|D|C|CR|DR)?/gi)
   );
 
   return matches.map((match) => ({
@@ -823,6 +822,10 @@ function parseMoney(value: string) {
 
   if (lastComma > -1) {
     return Number(cleaned.replaceAll(".", "").replace(",", "."));
+  }
+
+  if (lastDot > -1 && cleaned.length - lastDot - 1 === 2) {
+    return Number(cleaned.replaceAll(",", ""));
   }
 
   return Number(cleaned.replaceAll(",", ""));

@@ -81,11 +81,11 @@ Como não há login nem PIN, qualquer pessoa com acesso ao link da app pode ver 
 
 ## Importar despesas da Revolut
 
-1. Na Revolut, exporta o extrato/movimentos em CSV.
+1. Na Revolut, exporta o extrato/movimentos em Excel (`.xlsx`).
 2. Na app, abre `Transações`.
 3. Clica em `Importar`.
-4. Escolhe o ficheiro CSV.
+4. Escolhe o ficheiro Excel.
 5. Confirma a pré-visualização.
 6. Clica em `Importar despesas`.
 
-A app importa apenas movimentos negativos/despesas, cria categorias de despesa com os nomes vindos da Revolut e ignora duplicados simples por data, valor, descrição e categoria.
+A app também aceita CSV, se tiveres esse formato disponível. PDF não é suportado para importação automática porque é menos fiável para extrair colunas, datas e valores. A app importa apenas movimentos negativos/despesas, cria categorias de despesa com os nomes vindos da Revolut e ignora duplicados simples por data, valor, descrição e categoria.

@@ -138,9 +138,9 @@ export default function ImportPage() {
         <h1 className="mt-1 text-3xl font-bold tracking-tight">Importar transações</h1>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-[1fr_0.8fr]">
+      <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,0.55fr)_minmax(0,1.45fr)]">
         <Card className="p-5">
-          <label className="grid cursor-pointer place-items-center rounded-[2rem] border border-dashed border-border bg-muted/40 p-8 text-center">
+          <label className="grid cursor-pointer place-items-center rounded-[2rem] border border-dashed border-border bg-muted/40 p-8 text-center md:p-5">
             <FileUp className="mb-4 h-10 w-10 text-muted-foreground" />
             <span className="text-lg font-bold">Escolher ficheiro do banco</span>
             <span className="mt-2 max-w-sm text-sm text-muted-foreground">
@@ -159,7 +159,7 @@ export default function ImportPage() {
           ) : null}
         </Card>
 
-        <Card className="p-5">
+        <Card className="min-w-0 p-5">
           <div className="mb-4 flex items-start gap-3">
             <Info className="mt-1 h-5 w-5 text-muted-foreground" />
             <div>
@@ -200,25 +200,25 @@ export default function ImportPage() {
             </div>
           ) : null}
 
-          <div className="max-h-[34rem] space-y-2 overflow-y-auto pr-1">
+          <div className="max-h-[34rem] min-w-0 space-y-2 overflow-y-auto overflow-x-hidden pr-1">
             {rows.map((row) => (
               <div
-                className={`rounded-2xl border border-border p-3 ${
+                className={`min-w-0 rounded-2xl border border-border p-3 ${
                   row.ignoredReason ? "opacity-60" : ""
                 }`}
                 key={row.id}
               >
-                <div className="flex items-start gap-3">
+                <div className="flex min-w-0 items-start gap-3">
                   <input
                     checked={row.selected}
-                    className="mt-1 h-5 w-5 accent-emerald-600"
+                    className="mt-1 h-5 w-5 shrink-0 accent-emerald-600"
                     type="checkbox"
                     onChange={(event) => updateRow(row.id, { selected: event.target.checked })}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="truncate font-semibold">{row.description}</p>
-                      <strong className={row.type === "income" ? "text-emerald-600" : "text-rose-600"}>
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <p className="min-w-0 break-words font-semibold leading-snug">{row.description}</p>
+                      <strong className={`shrink-0 whitespace-nowrap ${row.type === "income" ? "text-emerald-600" : "text-rose-600"}`}>
                         {row.type === "income" ? "+" : "-"}
                         {euros(Math.abs(row.amount))}
                       </strong>
@@ -348,18 +348,25 @@ function parseMillenniumLines(lines: string[]): ParsedImportRow[] {
   const statementYear = getMillenniumStatementYear(lines);
   let previousBalance = getMillenniumInitialBalance(lines);
   let movementStarted = false;
+  let tableStarted = false;
   let movementEnded = false;
 
   lines.forEach((line) => {
     if (movementEnded) return;
 
     const normalizedLine = normalizeValue(line);
-    if (normalizedLine.includes("saldo inicial")) {
-      movementStarted = true;
+    if (normalizedLine.includes("descritivo")) {
+      tableStarted = true;
       return;
     }
 
-    if (!movementStarted) return;
+    if (normalizedLine.includes("saldo inicial")) {
+      movementStarted = true;
+      tableStarted = true;
+      return;
+    }
+
+    if (!movementStarted || !tableStarted) return;
 
     if (normalizedLine.includes("saldo final")) {
       if (current) chunks.push(current);
@@ -556,6 +563,11 @@ function isPdfNoiseLine(line: string) {
     normalized.includes("saldo disponivel") ||
     normalized.includes("pagina ") ||
     normalized.includes("millennium bcp") ||
+    normalized.includes("a transportar") ||
+    normalized.includes("transporte") ||
+    normalized.includes("capital social") ||
+    normalized.includes("matric") ||
+    normalized.includes("reg. com") ||
     normalized.includes("data movimento") ||
     normalized.includes("data valor") ||
     normalized.includes("descricao") ||

@@ -54,12 +54,12 @@ export async function fetchCategories() {
   return data as Category[];
 }
 
-async function getOrCreateExpenseCategory(name: string) {
-  const cleanName = name.trim() || "Revolut";
+async function getOrCreateCategory(name: string, type: TransactionType) {
+  const cleanName = name.trim() || (type === "income" ? "Outros" : "Revolut");
   const categories = await fetchCategories();
   const existing = categories.find(
     (category) =>
-      category.type === "expense" &&
+      category.type === type &&
       category.name.localeCompare(cleanName, "pt-PT", { sensitivity: "accent" }) === 0
   );
 
@@ -70,7 +70,7 @@ async function getOrCreateExpenseCategory(name: string) {
     .from("categories")
     .insert({
       name: cleanName,
-      type: "expense",
+      type,
       user_id: sharedUserId
     })
     .select("*")
@@ -180,8 +180,9 @@ export async function deleteTransaction(id: string) {
   if (error) throw error;
 }
 
-export async function importExpenseTransactions(
+export async function importTransactions(
   rows: Array<{
+    type: TransactionType;
     amount: number;
     category: string;
     description: string;
@@ -195,6 +196,7 @@ export async function importExpenseTransactions(
   const existingKeys = new Set(
     existing.map((transaction) =>
       [
+        transaction.type,
         transaction.date,
         Number(transaction.amount).toFixed(2),
         transaction.description?.trim().toLowerCase() || "",
@@ -207,9 +209,10 @@ export async function importExpenseTransactions(
   let skipped = 0;
 
   for (const row of rows) {
-    const category = await getOrCreateExpenseCategory(row.category);
+    const category = await getOrCreateCategory(row.category, row.type);
     const amount = Math.abs(Number(row.amount));
     const key = [
+      row.type,
       row.date,
       amount.toFixed(2),
       row.description.trim().toLowerCase(),
@@ -223,10 +226,10 @@ export async function importExpenseTransactions(
 
     const { error } = await supabase.from("transactions").insert({
       user_id: sharedUserId,
-      type: "expense",
+      type: row.type,
       amount,
       category_id: category.id,
-      description: row.description.trim() || "Despesa Revolut",
+      description: row.description.trim() || "Transação Revolut",
       payment_method: row.payment_method || "Revolut",
       date: row.date
     });

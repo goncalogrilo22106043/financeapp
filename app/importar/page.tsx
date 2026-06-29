@@ -6,15 +6,20 @@ import { ArrowLeft, CheckCircle2, FileUp, Info } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { importExpenseTransactions } from "@/lib/supabase/queries";
+import { importTransactions } from "@/lib/supabase/queries";
+import type { TransactionType } from "@/lib/types";
 import { euros } from "@/lib/utils";
 
-type ParsedExpense = {
+type ParsedImportRow = {
+  id: string;
+  selected: boolean;
+  type: TransactionType;
   amount: number;
   category: string;
   description: string;
   date: string;
   payment_method: string;
+  ignoredReason?: string;
 };
 
 type ImportResult = {
@@ -23,15 +28,31 @@ type ImportResult = {
 };
 
 export default function ImportPage() {
-  const [rows, setRows] = useState<ParsedExpense[]>([]);
+  const [rows, setRows] = useState<ParsedImportRow[]>([]);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<ImportResult | null>(null);
   const [importing, setImporting] = useState(false);
 
-  const total = useMemo(
-    () => rows.reduce((sum, row) => sum + Math.abs(row.amount), 0),
+  const selectedRows = useMemo(
+    () => rows.filter((row) => row.selected && !row.ignoredReason),
     [rows]
+  );
+  const selectedExpenses = useMemo(
+    () => selectedRows.filter((row) => row.type === "expense"),
+    [selectedRows]
+  );
+  const selectedIncome = useMemo(
+    () => selectedRows.filter((row) => row.type === "income"),
+    [selectedRows]
+  );
+  const expenseTotal = useMemo(
+    () => selectedExpenses.reduce((sum, row) => sum + Math.abs(row.amount), 0),
+    [selectedExpenses]
+  );
+  const incomeTotal = useMemo(
+    () => selectedIncome.reduce((sum, row) => sum + Math.abs(row.amount), 0),
+    [selectedIncome]
   );
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
@@ -46,7 +67,7 @@ export default function ImportPage() {
     try {
       const parsed = await parseRevolutFile(file);
       if (!parsed.length) {
-        setError("Não encontrei despesas no ficheiro. Confirma se exportaste em Excel/CSV.");
+        setError("Não encontrei transações no ficheiro. Confirma se exportaste em Excel/CSV.");
         return;
       }
       setRows(parsed);
@@ -59,13 +80,23 @@ export default function ImportPage() {
     setImporting(true);
     setError("");
     try {
-      setResult(await importExpenseTransactions(rows));
+      setResult(await importTransactions(selectedRows));
       setRows([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao importar para a Supabase.");
     } finally {
       setImporting(false);
     }
+  }
+
+  function updateRow(id: string, updates: Partial<ParsedImportRow>) {
+    setRows((current) => current.map((row) => (row.id === id ? { ...row, ...updates } : row)));
+  }
+
+  function selectAll(value: boolean) {
+    setRows((current) =>
+      current.map((row) => (row.ignoredReason ? row : { ...row, selected: value }))
+    );
   }
 
   return (
@@ -78,7 +109,7 @@ export default function ImportPage() {
           </Link>
         </Button>
         <p className="text-muted-foreground">Revolut Excel ou CSV</p>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight">Importar despesas</h1>
+        <h1 className="mt-1 text-3xl font-bold tracking-tight">Importar transações</h1>
       </div>
 
       <div className="grid gap-4 md:grid-cols-[1fr_0.8fr]">
@@ -87,7 +118,7 @@ export default function ImportPage() {
             <FileUp className="mb-4 h-10 w-10 text-muted-foreground" />
             <span className="text-lg font-bold">Escolher Excel da Revolut</span>
             <span className="mt-2 max-w-sm text-sm text-muted-foreground">
-              Exporta o extrato na Revolut em Excel. CSV também funciona. PDF não é fiável para importar automaticamente.
+              Exporta o extrato na Revolut em Excel. CSV também funciona. Vais poder confirmar cada transação antes de importar.
             </span>
             <input accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf" className="sr-only" type="file" onChange={handleFile} />
           </label>
@@ -97,7 +128,7 @@ export default function ImportPage() {
           {result ? (
             <div className="mt-4 rounded-2xl bg-emerald-500/10 p-4 text-sm font-medium text-emerald-700 dark:text-emerald-300">
               <CheckCircle2 className="mr-2 inline h-4 w-4" />
-              Importadas {result.inserted} despesas. Ignoradas {result.skipped} duplicadas.
+              Importadas {result.inserted} transações. Ignoradas {result.skipped} duplicadas.
             </div>
           ) : null}
         </Card>
@@ -108,38 +139,99 @@ export default function ImportPage() {
             <div>
               <h2 className="text-xl font-bold">Pré-visualização</h2>
               <p className="text-sm text-muted-foreground">
-                Antes de importar, confirma o total e algumas linhas.
+                Confirma o que entra. Reembolsos, carregamentos Apple Pay e transferências para ti ficam ignorados.
               </p>
             </div>
           </div>
 
           <div className="mb-4 grid grid-cols-2 gap-3">
             <div className="rounded-2xl bg-muted p-4">
-              <p className="text-xs text-muted-foreground">Despesas</p>
-              <strong className="text-2xl">{rows.length}</strong>
+              <p className="text-xs text-muted-foreground">Selecionadas</p>
+              <strong className="text-2xl">{selectedRows.length}</strong>
             </div>
             <div className="rounded-2xl bg-muted p-4">
-              <p className="text-xs text-muted-foreground">Total</p>
-              <strong className="text-2xl">{euros(total)}</strong>
+              <p className="text-xs text-muted-foreground">Ignoradas</p>
+              <strong className="text-2xl">{rows.filter((row) => row.ignoredReason).length}</strong>
+            </div>
+            <div className="rounded-2xl bg-emerald-500/10 p-4">
+              <p className="text-xs text-emerald-700 dark:text-emerald-300">Receitas</p>
+              <strong className="text-2xl text-emerald-700 dark:text-emerald-300">{euros(incomeTotal)}</strong>
+            </div>
+            <div className="rounded-2xl bg-rose-500/10 p-4">
+              <p className="text-xs text-rose-700 dark:text-rose-300">Despesas</p>
+              <strong className="text-2xl text-rose-700 dark:text-rose-300">{euros(expenseTotal)}</strong>
             </div>
           </div>
 
-          <div className="max-h-72 space-y-2 overflow-y-auto">
-            {rows.slice(0, 8).map((row, index) => (
-              <div className="rounded-2xl border border-border p-3" key={`${row.date}-${row.amount}-${index}`}>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="truncate font-semibold">{row.description}</p>
-                  <strong className="text-rose-600">{euros(Math.abs(row.amount))}</strong>
+          {rows.length ? (
+            <div className="mb-3 flex gap-2">
+              <Button size="sm" variant="secondary" onClick={() => selectAll(true)}>
+                Selecionar tudo
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => selectAll(false)}>
+                Limpar
+              </Button>
+            </div>
+          ) : null}
+
+          <div className="max-h-[34rem] space-y-2 overflow-y-auto pr-1">
+            {rows.map((row) => (
+              <div
+                className={`rounded-2xl border border-border p-3 ${
+                  row.ignoredReason ? "opacity-60" : ""
+                }`}
+                key={row.id}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    checked={row.selected}
+                    className="mt-1 h-5 w-5 accent-emerald-600"
+                    disabled={Boolean(row.ignoredReason)}
+                    type="checkbox"
+                    onChange={(event) => updateRow(row.id, { selected: event.target.checked })}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate font-semibold">{row.description}</p>
+                      <strong className={row.type === "income" ? "text-emerald-600" : "text-rose-600"}>
+                        {row.type === "income" ? "+" : "-"}
+                        {euros(Math.abs(row.amount))}
+                      </strong>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {row.date} · {row.category}
+                    </p>
+                    {row.ignoredReason ? (
+                      <p className="mt-2 rounded-xl bg-muted px-3 py-2 text-xs font-medium text-muted-foreground">
+                        Ignorada automaticamente: {row.ignoredReason}
+                      </p>
+                    ) : (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-[8rem_1fr]">
+                        <select
+                          className="h-10 rounded-xl border border-border bg-background px-3 text-sm"
+                          value={row.type}
+                          onChange={(event) =>
+                            updateRow(row.id, { type: event.target.value as TransactionType })
+                          }
+                        >
+                          <option value="expense">Despesa</option>
+                          <option value="income">Receita</option>
+                        </select>
+                        <input
+                          className="h-10 rounded-xl border border-border bg-background px-3 text-sm"
+                          value={row.category}
+                          onChange={(event) => updateRow(row.id, { category: event.target.value })}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {row.date} · {row.category}
-                </p>
               </div>
             ))}
           </div>
 
-          <Button className="mt-5 w-full" disabled={!rows.length || importing} size="lg" onClick={handleImport}>
-            {importing ? "A importar..." : "Importar despesas"}
+          <Button className="mt-5 w-full" disabled={!selectedRows.length || importing} size="lg" onClick={handleImport}>
+            {importing ? "A importar..." : "Importar selecionadas"}
           </Button>
         </Card>
       </div>
@@ -147,7 +239,7 @@ export default function ImportPage() {
   );
 }
 
-async function parseRevolutFile(file: File): Promise<ParsedExpense[]> {
+async function parseRevolutFile(file: File): Promise<ParsedImportRow[]> {
   const name = file.name.toLowerCase();
 
   if (name.endsWith(".pdf") || file.type === "application/pdf") {
@@ -165,7 +257,7 @@ async function parseRevolutFile(file: File): Promise<ParsedExpense[]> {
   return parseRevolutRows(parseCsv(await file.text()));
 }
 
-function parseRevolutRows(records: string[][]): ParsedExpense[] {
+function parseRevolutRows(records: string[][]): ParsedImportRow[] {
   if (records.length < 2) return [];
 
   const headerIndex = findHeaderRow(records);
@@ -176,8 +268,9 @@ function parseRevolutRows(records: string[][]): ParsedExpense[] {
 
   return body
     .map((record) => recordToObject(headers, record))
-    .map(toExpense)
-    .filter((row): row is ParsedExpense => Boolean(row));
+    .map(toImportRow)
+    .filter((row): row is ParsedImportRow => Boolean(row))
+    .map((row, index) => ({ ...row, id: `${row.id}|${index}` }));
 }
 
 function findHeaderRow(records: string[][]) {
@@ -189,18 +282,30 @@ function findHeaderRow(records: string[][]) {
       joined.includes("amount") ||
       joined.includes("valor") ||
       joined.includes("montante") ||
+      joined.includes("paid in") ||
       joined.includes("paid out");
     return hasDate && hasAmount;
   });
 }
 
-function toExpense(row: Record<string, string>): ParsedExpense | null {
-  const amountMatch = pickMatch(row, ["amount", "valor", "montante", "paid out", "money out", "out"]);
-  let amount = parseMoney(amountMatch.value);
+function toImportRow(row: Record<string, string>): ParsedImportRow | null {
+  const amountMatch = pickMatch(row, ["amount", "valor", "montante"]);
+  const paidInMatch = pickMatch(row, ["paid in", "money in", "in"]);
+  const paidOutMatch = pickMatch(row, ["paid out", "money out", "out"]);
+  let amount = amountMatch.value ? parseMoney(amountMatch.value) : Number.NaN;
+
+  if (!Number.isFinite(amount) && paidInMatch.value) {
+    amount = Math.abs(parseMoney(paidInMatch.value));
+  }
+
+  if (!Number.isFinite(amount) && paidOutMatch.value) {
+    amount = -Math.abs(parseMoney(paidOutMatch.value));
+  }
+
   if (amountMatch.key.includes("paid out") || amountMatch.key.includes("money out")) {
     amount = -Math.abs(amount);
   }
-  if (!Number.isFinite(amount) || amount >= 0) return null;
+  if (!Number.isFinite(amount) || amount === 0) return null;
 
   const state = normalizeValue(pick(row, ["state", "estado", "status"]));
   if (state && !["completed", "complete", "concluido", "concluida"].includes(state)) {
@@ -221,13 +326,87 @@ function toExpense(row: Record<string, string>): ParsedExpense | null {
   const date = parseDate(dateRaw);
   if (!date) return null;
 
+  const description = pick(row, ["description", "descricao", "descrição", "merchant", "name", "counterparty"]) || "Despesa Revolut";
+  const rawCategory = pick(row, ["category", "categoria", "expense category", "merchant category", "tipo"]);
+  const normalizedDescription = normalizeValue(description);
+  const normalizedCategory = normalizeValue(rawCategory);
+  const isIncome = amount > 0;
+  const ignoredReason = getIgnoredReason(normalizedDescription, normalizedCategory, isIncome);
+  const type: TransactionType = isIncome ? "income" : "expense";
+
   return {
+    id: [
+      date,
+      amount.toFixed(2),
+      description,
+      rawCategory
+    ].join("|"),
+    selected: !ignoredReason,
+    type,
     amount: Math.abs(amount),
-    category: pick(row, ["category", "categoria", "expense category", "merchant category", "tipo"]) || "Revolut",
-    description: pick(row, ["description", "descricao", "descrição", "merchant", "name", "counterparty"]) || "Despesa Revolut",
+    category: rawCategory || (type === "income" ? "Outros" : "Revolut"),
+    description,
     date,
-    payment_method: "Revolut"
+    payment_method: "Revolut",
+    ignoredReason
   };
+}
+
+function getIgnoredReason(description: string, category: string, isIncome: boolean) {
+  if (isOwnAccountTransfer(description)) {
+    return "transferência entre contas tuas";
+  }
+
+  if (isOwnTopUp(description, category)) {
+    return "carregamento/top-up teu";
+  }
+
+  if (isIncome && isRefund(description, category)) {
+    return "reembolso";
+  }
+
+  return "";
+}
+
+function isOwnAccountTransfer(description: string) {
+  const hasOwnName =
+    description.includes("goncalo grilo") ||
+    description.includes("goncalo galvao grilo") ||
+    description.includes("goncalo galvao de sousa grilo");
+
+  return (
+    hasOwnName &&
+    (description.startsWith("to ") ||
+      description.startsWith("from ") ||
+      description.includes("transferencia para") ||
+      description.includes("transferencia de"))
+  );
+}
+
+function isOwnTopUp(description: string, category: string) {
+  const text = `${description} ${category}`;
+  return (
+    text.includes("apple pay") ||
+    text.includes("top-up") ||
+    text.includes("top up") ||
+    text.includes("card top-up") ||
+    text.includes("card top up") ||
+    text.includes("carregamento com apple pay")
+  );
+}
+
+function isRefund(description: string, category: string) {
+  const text = `${description} ${category}`;
+  return (
+    text.includes("refund") ||
+    text.includes("refunded") ||
+    text.includes("reembolso") ||
+    text.includes("cashback") ||
+    text.includes("chargeback") ||
+    text.includes("reversal") ||
+    text.includes("revertida") ||
+    text.includes("devolucao")
+  );
 }
 
 function parseCsv(text: string) {

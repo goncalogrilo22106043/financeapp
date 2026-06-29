@@ -10,7 +10,7 @@ App web/PWA de finanças pessoais em português de Portugal, construída com Nex
 - Bottom sheet rápida para adicionar receitas/despesas
 - Página de transações com filtros, pesquisa, edição e remoção
 - Página de categorias para criar, editar e apagar categorias
-- Importador CSV da Revolut para despesas em lote
+- Importador Excel/CSV da Revolut com pré-visualização e seleção manual
 - Página de estatísticas com gráficos simples
 - Página de objetivos financeiros
 - PWA-ready com `manifest.json`, ícone e service worker
@@ -79,13 +79,24 @@ Não há ecrã de login. Todos os dispositivos usam o mesmo perfil partilhado `m
 
 Como não há login nem PIN, qualquer pessoa com acesso ao link da app pode ver e alterar os dados. Para uso pessoal, mantém o link privado.
 
-## Importar despesas da Revolut
+## Importar transações da Revolut
 
 1. Na Revolut, exporta o extrato/movimentos em Excel (`.xlsx`).
 2. Na app, abre `Transações`.
 3. Clica em `Importar`.
 4. Escolhe o ficheiro Excel.
-5. Confirma a pré-visualização.
-6. Clica em `Importar despesas`.
+5. Confirma a pré-visualização e desmarca o que não quiseres importar.
+6. Se for preciso, muda uma linha entre `Despesa` e `Receita` ou ajusta a categoria.
+7. Clica em `Importar selecionadas`.
 
-A app também aceita CSV, se tiveres esse formato disponível. PDF não é suportado para importação automática porque é menos fiável para extrair colunas, datas e valores. A app importa apenas movimentos negativos/despesas, cria categorias de despesa com os nomes vindos da Revolut e ignora duplicados simples por data, valor, descrição e categoria.
+A app também aceita CSV, se tiveres esse formato disponível. PDF não é suportado para importação automática porque é menos fiável para extrair colunas, datas e valores.
+
+Regras automáticas:
+
+- Valores negativos entram como despesas.
+- Valores positivos entram como receitas.
+- Reembolsos não são importados.
+- Carregamentos/top-ups, incluindo Apple Pay, não são importados.
+- Transferências para `Gonçalo Grilo` ou `Gonçalo Galvão de Sousa Grilo` não são importadas, porque são movimentos entre contas tuas.
+- Categorias novas são criadas automaticamente na Supabase com o nome vindo da Revolut.
+- Duplicados simples são ignorados por tipo, data, valor, descrição e categoria.

@@ -99,7 +99,8 @@ Regras automáticas:
 - Reembolsos não são importados.
 - Carregamentos/top-ups, incluindo Apple Pay e Open Banking, não são importados.
 - Transferências para `Gonçalo Grilo` ou `Gonçalo Galvão de Sousa Grilo` não são importadas, porque são movimentos entre contas tuas.
-- No PDF do Millennium, `TRF P/Gonçalo Grilo`, `TRF. P/O Gonçalo Grilo` e compras `Revolut 5625 Dublin IE` não são importadas.
+- No PDF do Millennium, `TRF. P/O Gonçalo Grilo` entra como receita por defeito, porque representa dinheiro vindo da Revolut para o Millennium.
+- No PDF do Millennium, compras `Revolut 5625 Dublin IE` não são importadas porque são carregamentos da Revolut.
 - Movimentos ignorados aparecem desmarcados por defeito, mas podes marcá-los manualmente antes de importar se forem o único registo desse rendimento/despesa.
 - Categorias novas são criadas automaticamente na Supabase com o nome vindo do banco ou sugerido pela app.
 - Duplicados simples são ignorados por tipo, data, valor, descrição e categoria.

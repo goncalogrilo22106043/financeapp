@@ -427,7 +427,7 @@ function toMillenniumRow(
   const isIncome = amount > 0;
   const type: TransactionType = isIncome ? "income" : "expense";
   const ignoredReason =
-    normalizedDescription.includes("revolut") ? "carregamento/top-up teu" : getIgnoredReason(normalizedDescription, "", isIncome);
+    normalizedDescription.includes("revolut") ? "carregamento/top-up teu" : getMillenniumIgnoredReason(normalizedDescription, isIncome);
 
   return {
     row: {
@@ -494,6 +494,23 @@ function parseSignedMoney(raw: string, line: string) {
   }
 
   return -amount;
+}
+
+function getMillenniumIgnoredReason(description: string, isIncome: boolean) {
+  if (isIncome && isOwnMillenniumIncomeTransfer(description)) {
+    return "";
+  }
+
+  return getIgnoredReason(description, "", isIncome);
+}
+
+function isOwnMillenniumIncomeTransfer(description: string) {
+  const hasOwnName =
+    description.includes("goncalo grilo") ||
+    description.includes("goncalo galvao grilo") ||
+    description.includes("goncalo galvao de sousa grilo");
+
+  return hasOwnName && (description.includes("trf p/o") || description.includes("trf. p/o"));
 }
 
 function getMillenniumStatementYear(lines: string[]) {

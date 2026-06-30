@@ -260,6 +260,12 @@ export default function ImportPage() {
     setResult(null);
 
     try {
+      const validationError = validateRowsBeforeImport(selectedRows, accounts);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+
       const payload = selectedRows.map((row) => {
         if (row.type === "transfer") {
           return {
@@ -289,7 +295,7 @@ export default function ImportPage() {
       setRows([]);
       setExistingTransactions(await fetchAllTransactions());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao guardar a importação.");
+      setError(readImportError(err));
     } finally {
       setSaving(false);
     }
@@ -508,6 +514,37 @@ function MappingSelect({
       </Select>
     </label>
   );
+}
+
+function validateRowsBeforeImport(rows: PreviewRow[], accounts: Account[]) {
+  if (!rows.length) return "Seleciona pelo menos um movimento para guardar.";
+
+  const accountNames = new Set(accounts.map((account) => normalizeValue(account.name)));
+  const invalidTransfer = rows.find((row) => {
+    if (row.type !== "transfer") return false;
+    const from = normalizeValue(row.fromAccountName || "");
+    const to = normalizeValue(row.toAccountName || "");
+    return !from || !to || from === to || !accountNames.has(from) || !accountNames.has(to);
+  });
+
+  if (invalidTransfer) {
+    return `A transferência "${invalidTransfer.description}" precisa de conta de origem e destino válidas. Confirma se existem as contas Millennium e Revolut em Contas.`;
+  }
+
+  return "";
+}
+
+function readImportError(err: unknown) {
+  if (err instanceof Error && err.message) {
+    return `${err.message}. Se a mensagem falar de account_id, from_account_id, to_account_id ou relationship, atualiza a estrutura da Supabase com o ficheiro supabase/upgrade-transfers.sql.`;
+  }
+
+  if (typeof err === "object" && err) {
+    const maybeError = err as { message?: string; details?: string; hint?: string };
+    return [maybeError.message, maybeError.details, maybeError.hint].filter(Boolean).join(" ") || "Erro ao guardar a importação.";
+  }
+
+  return "Erro ao guardar a importação.";
 }
 
 function Metric({
@@ -852,7 +889,7 @@ function parseMillenniumLines(lines: string[], fileName: string): Record<string,
 }
 
 function parseMillenniumMovement(line: string, statementYear: string, previousBalance: number) {
-  const dateMatch = line.match(/\b(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\b/);
+  const dateMatch = line.match(/^\s*(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\b/);
   if (!dateMatch) return null;
 
   const moneyMatches = findMoneyMatches(line);
@@ -930,7 +967,15 @@ function parseMillenniumSignedAmount(raw: string, line: string, previousBalance:
 function parseMillenniumDate(value: string, statementYear: string) {
   const parts = value.split(/[./-]/).filter(Boolean);
   if (parts.length < 2) return "";
-  const year = parts[2] ? (parts[2].length === 2 ? `20${parts[2]}` : parts[2]) : statementYear;
+  const day = Number(parts[0]);
+  const month = Number(parts[1]);
+  const parsedYear = parts[2] ? (parts[2].length === 2 ? `20${parts[2]}` : parts[2]) : statementYear;
+  const year = /^20\d{2}$/.test(parsedYear) ? parsedYear : statementYear;
+
+  if (!Number.isInteger(day) || !Number.isInteger(month) || day < 1 || day > 31 || month < 1 || month > 12) {
+    return "";
+  }
+
   return [year, parts[1].padStart(2, "0"), parts[0].padStart(2, "0")].join("-");
 }
 
@@ -948,8 +993,11 @@ function cleanMillenniumDescription(line: string, date: string, moneyValues: str
 }
 
 function getStatementYear(lines: string[], fileName: string) {
-  const source = `${fileName} ${lines.slice(0, 20).join(" ")}`;
-  return source.match(/\b(20\d{2})\b/)?.[1] || String(new Date().getFullYear());
+  const fileYear = fileName.match(/\b(20\d{2})\d{3}\b/)?.[1] || fileName.match(/\b(20\d{2})\b/)?.[1];
+  if (fileYear) return fileYear;
+
+  const header = lines.slice(0, 30).join(" ");
+  return header.match(/\b(20\d{2})\b/)?.[1] || String(new Date().getFullYear());
 }
 
 function getInitialBalance(lines: string[]) {
@@ -978,49 +1026,82 @@ function isMillenniumNoiseLine(line: string) {
 function suggestStandaloneTransfer(accountName: string, description: string, signedAmount: number) {
   const account = normalizeValue(accountName);
   const text = normalizeValue(description);
+  const isMillennium = account.includes("millennium");
+  const isRevolut = account.includes("revolut");
+  const mentionsOwnName = matchesAny(text, [
+    "goncalo grilo",
+    "gonçalo grilo",
+    "g grilo"
+  ]);
+  const isTopUp = matchesAny(text, [
+    "top up",
+    "top-up",
+    "card top-up",
+    "card top up",
+    "apple pay",
+    "open banking",
+    "carregamento",
+    "revolut 5625",
+    "dublin ie"
+  ]);
+  const isTransferText = matchesAny(text, [
+    "trf",
+    "trf.",
+    "transfer",
+    "transferencia",
+    "transferência",
+    "sepa",
+    "mb way"
+  ]);
 
-  if (account.includes("millennium") && signedAmount < 0 && text.includes("revolut")) {
-    return {
-      type: "transfer" as TransactionType,
-      category: "Transferência",
-      confidence: 92,
-      reason: "Carregamento Revolut",
-      fromAccountName: "Millennium",
-      toAccountName: "Revolut"
-    };
+  if (isMillennium) {
+    if (signedAmount < 0 && (text.includes("revolut") || isTopUp)) {
+      return transferSuggestion("Carregamento Revolut", "Millennium", "Revolut", 94);
+    }
+
+    if (signedAmount > 0 && mentionsOwnName && isTransferText) {
+      return transferSuggestion("Revolut para Millennium", "Revolut", "Millennium", 90);
+    }
+
+    if (signedAmount < 0 && mentionsOwnName && isTransferText) {
+      return transferSuggestion("Millennium para Revolut", "Millennium", "Revolut", 90);
+    }
   }
 
-  if (
-    account.includes("millennium") &&
-    signedAmount > 0 &&
-    matchesAny(text, ["trf. p/o goncalo grilo", "trf p/o goncalo grilo", "transferencia p/o goncalo grilo"])
-  ) {
-    return {
-      type: "transfer" as TransactionType,
-      category: "Transferência",
-      confidence: 88,
-      reason: "Revolut para Millennium",
-      fromAccountName: "Revolut",
-      toAccountName: "Millennium"
-    };
+  if (isRevolut) {
+    if (signedAmount > 0 && (isTopUp || matchesAny(text, ["by card", "by bank card", "bank transfer"]))) {
+      return transferSuggestion("Millennium para Revolut", "Millennium", "Revolut", 92);
+    }
+
+    if (signedAmount < 0 && mentionsOwnName && isTransferText) {
+      return transferSuggestion("Revolut para Millennium", "Revolut", "Millennium", 90);
+    }
+
+    if (signedAmount < 0 && matchesAny(text, ["millennium", "bcp"])) {
+      return transferSuggestion("Revolut para Millennium", "Revolut", "Millennium", 88);
+    }
   }
 
-  if (
-    account.includes("millennium") &&
-    signedAmount < 0 &&
-    matchesAny(text, ["trf. p/ goncalo grilo", "trf p/ goncalo grilo", "transferencia p/ goncalo grilo"])
-  ) {
-    return {
-      type: "transfer" as TransactionType,
-      category: "Transferência",
-      confidence: 88,
-      reason: "Millennium para Revolut",
-      fromAccountName: "Millennium",
-      toAccountName: "Revolut"
-    };
+  if (signedAmount !== 0 && isTransferText && matchesAny(text, ["revolut", "millennium", "bcp"])) {
+    const fromAccountName = signedAmount < 0 ? accountName : text.includes("revolut") ? "Revolut" : "Millennium";
+    const toAccountName = signedAmount < 0 ? (text.includes("revolut") ? "Revolut" : "Millennium") : accountName;
+    if (normalizeValue(fromAccountName) !== normalizeValue(toAccountName)) {
+      return transferSuggestion("Possível transferência interna", fromAccountName, toAccountName, 82);
+    }
   }
 
   return null;
+}
+
+function transferSuggestion(reason: string, fromAccountName: string, toAccountName: string, confidence: number) {
+  return {
+    type: "transfer" as TransactionType,
+    category: "Transferência",
+    confidence,
+    reason,
+    fromAccountName,
+    toAccountName
+  };
 }
 
 function detectMapping(headers: string[]): ColumnMapping {
@@ -1073,10 +1154,10 @@ function detectInternalTransfers(rows: PreviewRow[]) {
   const used = new Set<string>();
 
   for (const negative of next) {
-    if (used.has(negative.id) || negative.signedAmount >= 0) continue;
+    if (used.has(negative.id) || negative.signedAmount >= 0 || negative.type === "transfer") continue;
 
     const positive = next.find((candidate) => {
-      if (used.has(candidate.id) || candidate.id === negative.id) return false;
+      if (used.has(candidate.id) || candidate.id === negative.id || candidate.type === "transfer") return false;
       if (candidate.accountId === negative.accountId || candidate.signedAmount <= 0) return false;
       if (Math.abs(daysBetween(candidate.date, negative.date)) > 3) return false;
       if (!amountsMatch(candidate.amount, negative.amount)) return false;

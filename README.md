@@ -56,6 +56,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 
 O SQL recria as tabelas `profiles`, `accounts`, `categories`, `transactions` e `goals`. Se já tinhas dados antigos, exporta primeiro antes de executar.
 
+Se já tens dados na Supabase e a app der erro ao guardar transferências/importações, executa antes o ficheiro `supabase/upgrade-transfers.sql`. Esse ficheiro atualiza a estrutura sem apagar os dados.
+
 ## Deploy na Vercel
 
 1. Coloca os ficheiros do projeto no GitHub.

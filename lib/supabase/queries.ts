@@ -281,6 +281,7 @@ export async function saveTransaction(input: TransactionInput) {
   }
 
   await applyBalanceChange(data as Transaction, "apply");
+  return data as Transaction;
 }
 
 export async function deleteTransaction(id: string) {
@@ -416,18 +417,20 @@ export async function importTransactions(
 
   let inserted = 0;
   let skipped = 0;
+  const preparedRows: TransactionInput[] = [];
+  const nextKeys = new Set(existingKeys);
 
   for (const row of rows) {
     const amount = Math.abs(Number(row.amount));
     const category = row.type === "transfer" ? null : await getOrCreateCategory(row.category || "Outros", row.type as CategoryType);
     const account = row.type === "transfer" ? null :
-      accounts.find((item) => item.name.toLowerCase() === row.account_name?.toLowerCase()) ||
+      findAccountByName(accounts, row.account_name) ||
       fallbackAccount;
     const fromAccount = row.type === "transfer"
-      ? accounts.find((item) => item.name.toLowerCase() === row.from_account_name?.toLowerCase())
+      ? findAccountByName(accounts, row.from_account_name)
       : null;
     const toAccount = row.type === "transfer"
-      ? accounts.find((item) => item.name.toLowerCase() === row.to_account_name?.toLowerCase())
+      ? findAccountByName(accounts, row.to_account_name)
       : null;
     const key = [
       row.type,
@@ -445,7 +448,12 @@ export async function importTransactions(
       continue;
     }
 
-    await saveTransaction({
+    if (nextKeys.has(key)) {
+      skipped += 1;
+      continue;
+    }
+
+    preparedRows.push({
       type: row.type,
       amount,
       category_id: category?.id || null,
@@ -455,12 +463,44 @@ export async function importTransactions(
       description: row.description.trim() || "Movimento importado",
       date: row.date
     });
+    nextKeys.add(key);
+  }
 
-    existingKeys.add(key);
-    inserted += 1;
+  const createdTransactions: Transaction[] = [];
+
+  try {
+    for (const preparedRow of preparedRows) {
+      const transaction = await saveTransaction(preparedRow);
+      if (transaction) createdTransactions.push(transaction);
+      inserted += 1;
+    }
+  } catch (error) {
+    for (const transaction of createdTransactions.reverse()) {
+      await deleteTransaction(transaction.id);
+    }
+    throw error;
   }
 
   return { inserted, skipped };
+}
+
+function findAccountByName(accounts: Account[], name?: string) {
+  const normalizedName = normalizeImportText(name || "");
+  if (!normalizedName) return undefined;
+
+  return accounts.find((account) => {
+    const accountName = normalizeImportText(account.name);
+    return accountName === normalizedName || accountName.includes(normalizedName) || normalizedName.includes(accountName);
+  });
+}
+
+function normalizeImportText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export async function fetchGoals() {

@@ -163,7 +163,7 @@ export default function ImportPage() {
   }, []);
 
   const selectedRows = useMemo(
-    () => rows.filter((row) => row.selected && (!row.duplicate || row.importAnyway)),
+    () => rows.filter((row) => row.selected),
     [rows]
   );
   const selectedIncome = useMemo(
@@ -221,8 +221,8 @@ export default function ImportPage() {
     [rows]
   );
   const visibleRows = useMemo(
-    () => (reviewRows.length ? reviewRows : rows),
-    [reviewRows, rows]
+    () => rows,
+    [rows]
   );
   const needsMapping = files.some((file) => file.needsMapping);
   const activeStep = rows.length ? (selectedTransfers.length ? 2 : 1) : 0;
@@ -319,7 +319,7 @@ export default function ImportPage() {
     setRows((current) =>
       current.map((row) => ({
         ...row,
-        selected: row.duplicate && !row.importAnyway ? false : value
+        selected: value
       }))
     );
   }
@@ -362,7 +362,7 @@ export default function ImportPage() {
           learnedRule: false,
           ruleId: undefined,
           needsReview: false,
-          selected: item.duplicate && !item.importAnyway ? false : true,
+          selected: true,
           linkedTransferId: undefined,
           transferGroupId: undefined,
           fromAccountName: undefined,
@@ -462,7 +462,6 @@ export default function ImportPage() {
 
   async function saveRulesFromRows(importedRows: PreviewRow[]) {
     const rulesToSave = importedRows
-      .filter((row) => !row.duplicate || row.importAnyway)
       .filter((row) => !row.linkedTransferId || row.selected)
       .filter((row) => row.type !== "transfer" || isReliableInternalTransferDescription(row.description))
       .map((row) => ({
@@ -872,7 +871,6 @@ function PreviewItem({
   onUpdate: (id: string, updates: Partial<PreviewRow>) => void;
 }) {
   const categories = row.type === "income" ? categoryOptions.income : categoryOptions.expense;
-  const isTransferCounterpart = Boolean(row.type === "transfer" && !row.selected && row.linkedTransferId);
   const invalidTransfer = isInvalidTransferRow(row, accounts);
 
   return (
@@ -889,7 +887,6 @@ function PreviewItem({
         <input
           checked={row.selected}
           className="mt-1 h-5 w-5 shrink-0 accent-emerald-600"
-          disabled={isTransferCounterpart}
           type="checkbox"
           onChange={(event) => onUpdate(row.id, { selected: event.target.checked })}
         />
@@ -958,13 +955,13 @@ function PreviewItem({
             ) : null}
           </div>
 
-          {row.duplicate && !row.importAnyway ? (
+          {row.duplicate ? (
             <div className="mt-3 flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" onClick={() => onUpdate(row.id, { selected: false })}>
-                Ignorar
+                Não importar
               </Button>
-              <Button size="sm" variant="outline" onClick={() => onUpdate(row.id, { importAnyway: true })}>
-                Importar mesmo assim
+              <Button size="sm" variant="outline" onClick={() => onUpdate(row.id, { selected: true, importAnyway: true })}>
+                Manter selecionado
               </Button>
             </div>
           ) : null}
@@ -1037,7 +1034,7 @@ function PreviewItem({
                   learnedRule: false,
                   ruleId: undefined,
                   needsReview: false,
-                  selected: row.duplicate ? row.importAnyway : row.selected,
+                  selected: row.selected,
                   ...(nextType === "transfer"
                     ? {
                         amount: row.originalAmount,
@@ -1777,7 +1774,6 @@ function markDuplicates(rows: PreviewRow[], existing: Transaction[]) {
     return duplicate
       ? {
           ...row,
-          selected: false,
           duplicate: true,
           confidence: Math.min(row.confidence, 55),
           reason: "Possível duplicado"
@@ -1813,7 +1809,6 @@ function detectInternalTransfers(rows: PreviewRow[]) {
     negative.linkedTransferId = positive.id;
     negative.fromAccountName = negative.accountName;
     negative.toAccountName = positive.accountName;
-    negative.selected = !negative.duplicate;
     negative.transferDecision = "suggested";
 
     positive.type = "transfer";

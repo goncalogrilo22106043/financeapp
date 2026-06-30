@@ -497,6 +497,7 @@ export async function importTransactions(
   let skipped = 0;
   const preparedRows: TransactionInput[] = [];
   const nextKeys = new Set(existingKeys);
+  const preparedTransfers: TransactionInput[] = [];
 
   for (const row of rows) {
     const amount = Math.abs(Number(row.amount));
@@ -521,7 +522,18 @@ export async function importTransactions(
       toAccount?.name.trim().toLowerCase() || ""
     ].join("|");
 
-    if (existingKeys.has(key) || (row.type === "transfer" ? (!fromAccount || !toAccount) : !account || !category)) {
+    const duplicateTransfer = row.type === "transfer" && fromAccount && toAccount && (
+      hasSimilarTransfer(existing, row.date, amount, fromAccount.id, toAccount.id) ||
+      preparedTransfers.some((transaction) =>
+        isSimilarTransfer(transaction, row.date, amount, fromAccount.id, toAccount.id)
+      )
+    );
+
+    if (
+      existingKeys.has(key) ||
+      duplicateTransfer ||
+      (row.type === "transfer" ? (!fromAccount || !toAccount) : !account || !category)
+    ) {
       skipped += 1;
       continue;
     }
@@ -531,7 +543,7 @@ export async function importTransactions(
       continue;
     }
 
-    preparedRows.push({
+    const preparedRow = {
       type: row.type,
       amount,
       category_id: category?.id || null,
@@ -540,7 +552,9 @@ export async function importTransactions(
       to_account_id: toAccount?.id || null,
       description: row.description.trim() || "Movimento importado",
       date: row.date
-    });
+    };
+    preparedRows.push(preparedRow);
+    if (preparedRow.type === "transfer") preparedTransfers.push(preparedRow);
     nextKeys.add(key);
   }
 
@@ -570,6 +584,37 @@ function findAccountByName(accounts: Account[], name?: string) {
     const accountName = normalizeImportText(account.name);
     return accountName === normalizedName || accountName.includes(normalizedName) || normalizedName.includes(accountName);
   });
+}
+
+function hasSimilarTransfer(
+  transactions: Transaction[],
+  date: string,
+  amount: number,
+  fromAccountId: string,
+  toAccountId: string
+) {
+  return transactions.some((transaction) =>
+    isSimilarTransfer(transaction, date, amount, fromAccountId, toAccountId)
+  );
+}
+
+function isSimilarTransfer(
+  transaction: Pick<Transaction, "type" | "date" | "amount" | "from_account_id" | "to_account_id">,
+  date: string,
+  amount: number,
+  fromAccountId: string,
+  toAccountId: string
+) {
+  if (transaction.type !== "transfer") return false;
+  if (transaction.from_account_id !== fromAccountId || transaction.to_account_id !== toAccountId) return false;
+  if (Math.abs(Number(transaction.amount || 0) - amount) > 0.02) return false;
+  return Math.abs(daysBetweenImportDates(transaction.date, date)) <= 3;
+}
+
+function daysBetweenImportDates(a: string, b: string) {
+  const first = new Date(`${a}T00:00:00`).getTime();
+  const second = new Date(`${b}T00:00:00`).getTime();
+  return Math.round((first - second) / 86400000);
 }
 
 function normalizeImportText(value: string) {

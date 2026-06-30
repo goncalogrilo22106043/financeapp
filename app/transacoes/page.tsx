@@ -62,7 +62,7 @@ function Transactions() {
   }, [month]);
 
   const filtered = useMemo(() => {
-    return transactions
+    return dedupeInternalTransfers(transactions)
       .filter((transaction) => type === "all" || transaction.type === type)
       .filter((transaction) => categoryId === "all" || transaction.category_id === categoryId)
       .filter(
@@ -82,6 +82,10 @@ function Transactions() {
         return (b.created_at || "").localeCompare(a.created_at || "");
       });
   }, [accountId, categoryId, search, transactions, type]);
+  const duplicateTransferIds = useMemo(
+    () => findDuplicateInternalTransferIds(transactions),
+    [transactions]
+  );
 
   function openNew() {
     setEditing(null);
@@ -123,6 +127,26 @@ function Transactions() {
       window.setTimeout(() => setSuccess(""), 3500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não consegui dividir este movimento.");
+    }
+  }
+
+  async function cleanDuplicateTransfers() {
+    if (!duplicateTransferIds.length) return;
+    const ok = window.confirm(
+      `Encontrei ${duplicateTransferIds.length} transferência(s) duplicada(s). Queres apagar os duplicados e corrigir os saldos?`
+    );
+    if (!ok) return;
+
+    setError("");
+    try {
+      for (const id of duplicateTransferIds) {
+        await deleteTransaction(id);
+      }
+      setSuccess("Transferências duplicadas apagadas.");
+      await load();
+      window.setTimeout(() => setSuccess(""), 3500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não consegui limpar as transferências duplicadas.");
     }
   }
 
@@ -220,6 +244,18 @@ function Transactions() {
         </div>
       ) : null}
 
+      {duplicateTransferIds.length ? (
+        <div className="mb-4 rounded-2xl border border-sky-500/25 bg-sky-500/5 p-4 text-sm text-sky-800 dark:text-sky-200">
+          <p className="font-semibold">Há transferências internas duplicadas neste mês.</p>
+          <p className="mt-1 text-muted-foreground">
+            Isto acontece quando a mesma transferência aparece no extrato da Revolut e no Millennium.
+          </p>
+          <Button className="mt-3" size="sm" variant="secondary" onClick={cleanDuplicateTransfers}>
+            Limpar duplicados
+          </Button>
+        </div>
+      ) : null}
+
       <TransactionList
         transactions={filtered}
         onEdit={(transaction) => {
@@ -271,4 +307,40 @@ function Transactions() {
 
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function dedupeInternalTransfers(transactions: Transaction[]) {
+  const duplicateIds = new Set(findDuplicateInternalTransferIds(transactions));
+  return transactions.filter((transaction) => !duplicateIds.has(transaction.id));
+}
+
+function findDuplicateInternalTransferIds(transactions: Transaction[]) {
+  const result: Transaction[] = [];
+  const duplicateIds: string[] = [];
+
+  transactions.forEach((transaction) => {
+    if (transaction.type !== "transfer") {
+      result.push(transaction);
+      return;
+    }
+
+    const duplicate = result.some((candidate) => {
+      if (candidate.type !== "transfer") return false;
+      if (candidate.from_account_id !== transaction.from_account_id) return false;
+      if (candidate.to_account_id !== transaction.to_account_id) return false;
+      if (Math.abs(Number(candidate.amount || 0) - Number(transaction.amount || 0)) > 0.02) return false;
+      return Math.abs(daysBetween(candidate.date, transaction.date)) <= 3;
+    });
+
+    if (duplicate) duplicateIds.push(transaction.id);
+    else result.push(transaction);
+  });
+
+  return duplicateIds;
+}
+
+function daysBetween(a: string, b: string) {
+  const first = new Date(`${a}T00:00:00`).getTime();
+  const second = new Date(`${b}T00:00:00`).getTime();
+  return Math.round((first - second) / 86400000);
 }

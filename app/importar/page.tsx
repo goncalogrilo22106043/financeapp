@@ -508,7 +508,7 @@ function PreviewItem({
   onUpdate: (id: string, updates: Partial<PreviewRow>) => void;
 }) {
   const categories = row.type === "income" ? incomeCategories : expenseCategories;
-  const isTransferCounterpart = row.type === "transfer" && !row.selected && row.linkedTransferId;
+  const isTransferCounterpart = Boolean(row.type === "transfer" && !row.selected && row.linkedTransferId);
 
   return (
     <div

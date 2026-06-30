@@ -203,9 +203,18 @@ export default function ImportPage() {
     () => rows.filter((row) => row.type === "transfer" && row.selected && row.transferDecision === "suggested"),
     [rows]
   );
+  const invalidTransferRows = useMemo(
+    () => rows.filter((row) => row.selected && isInvalidTransferRow(row, accounts)),
+    [accounts, rows]
+  );
   const reviewRows = useMemo(
-    () => rows.filter((row) => row.needsReview || row.duplicate || row.transferDecision === "suggested"),
-    [rows]
+    () => rows.filter((row) =>
+      row.needsReview ||
+      row.duplicate ||
+      row.transferDecision === "suggested" ||
+      invalidTransferRows.some((invalidRow) => invalidRow.id === row.id)
+    ),
+    [invalidTransferRows, rows]
   );
   const learnedRows = useMemo(
     () => rows.filter((row) => row.learnedRule && !row.needsReview && !row.duplicate && row.transferDecision !== "suggested"),
@@ -634,6 +643,15 @@ export default function ImportPage() {
               />
             ) : null}
 
+            {invalidTransferRows.length ? (
+              <div className="mb-4 rounded-3xl border border-rose-500/25 bg-rose-500/5 p-4 text-sm text-rose-700 dark:text-rose-300">
+                <p className="font-semibold">Há {invalidTransferRows.length} movimento(s) para corrigir.</p>
+                <p className="mt-1">
+                  Não precisas importar tudo outra vez. Corrige abaixo para Reembolso, Receita, Despesa ou escolhe contas válidas se for uma transferência tua.
+                </p>
+              </div>
+            ) : null}
+
             {rows.length ? (
               <div className="mb-3 flex flex-wrap gap-2">
                 <Button size="sm" variant="secondary" onClick={() => selectAll(true)}>
@@ -660,6 +678,7 @@ export default function ImportPage() {
 
               {visibleRows.map((row) => (
                 <PreviewItem
+                  accounts={accounts}
                   categoryOptions={categoryOptions}
                   key={row.id}
                   row={row}
@@ -727,13 +746,7 @@ function validateRowsBeforeImport(rows: PreviewRow[], accounts: Account[]) {
     return `Confirma primeiro o movimento "${pendingReview.description}" para a app aprender essa decisão.`;
   }
 
-  const accountNames = new Set(accounts.map((account) => normalizeValue(account.name)));
-  const invalidTransfer = rows.find((row) => {
-    if (row.type !== "transfer") return false;
-    const from = normalizeValue(row.fromAccountName || "");
-    const to = normalizeValue(row.toAccountName || "");
-    return !from || !to || from === to || !accountNames.has(from) || !accountNames.has(to);
-  });
+  const invalidTransfer = rows.find((row) => isInvalidTransferRow(row, accounts));
 
   if (invalidTransfer) {
     if (!isReliableInternalTransferDescription(invalidTransfer.description)) {
@@ -744,6 +757,15 @@ function validateRowsBeforeImport(rows: PreviewRow[], accounts: Account[]) {
   }
 
   return "";
+}
+
+function isInvalidTransferRow(row: PreviewRow, accounts: Account[]) {
+  if (row.type !== "transfer") return false;
+
+  const accountNames = new Set(accounts.map((account) => normalizeValue(account.name)));
+  const from = normalizeValue(row.fromAccountName || "");
+  const to = normalizeValue(row.toAccountName || "");
+  return !from || !to || from === to || !accountNames.has(from) || !accountNames.has(to);
 }
 
 function readImportError(err: unknown) {
@@ -844,17 +866,20 @@ function TransferReview({
 
 function PreviewItem({
   categoryOptions,
+  accounts,
   row,
   onSplit,
   onUpdate
 }: {
   categoryOptions: CategoryOptions;
+  accounts: Account[];
   row: PreviewRow;
   onSplit: (row: PreviewRow) => void;
   onUpdate: (id: string, updates: Partial<PreviewRow>) => void;
 }) {
   const categories = row.type === "income" ? categoryOptions.income : categoryOptions.expense;
   const isTransferCounterpart = Boolean(row.type === "transfer" && !row.selected && row.linkedTransferId);
+  const invalidTransfer = isInvalidTransferRow(row, accounts);
 
   return (
     <div
@@ -862,7 +887,8 @@ function PreviewItem({
         "min-w-0 rounded-3xl border border-border p-4",
         !row.selected && "opacity-65",
         row.duplicate && "border-amber-500/40 bg-amber-500/5",
-        row.type === "transfer" && "border-sky-500/30 bg-sky-500/5"
+        row.type === "transfer" && "border-sky-500/30 bg-sky-500/5",
+        invalidTransfer && "border-rose-500/40 bg-rose-500/5"
       )}
     >
       <div className="flex min-w-0 items-start gap-3">
@@ -924,6 +950,11 @@ function PreviewItem({
             {row.needsReview ? (
               <span className="rounded-full bg-orange-500/10 px-3 py-1 text-orange-700 dark:text-orange-300">
                 Rever
+              </span>
+            ) : null}
+            {invalidTransfer ? (
+              <span className="rounded-full bg-rose-500/10 px-3 py-1 text-rose-700 dark:text-rose-300">
+                Corrigir classificação
               </span>
             ) : null}
             {row.splitWithPartner ? (
@@ -1034,6 +1065,78 @@ function PreviewItem({
                   {row.fromAccountName || "Origem"} → {row.toAccountName || "Destino"}
                   {!row.selected && row.linkedTransferId ? " · já incluída na transferência ligada" : ""}
                 </div>
+                {invalidTransfer ? (
+                  <div className="space-y-2 rounded-2xl bg-rose-500/10 p-3 text-sm text-rose-700 dark:text-rose-300">
+                    <p className="font-medium">
+                      Isto só deve ficar como transferência se for entre contas tuas. Se alguém te devolveu dinheiro, marca como reembolso.
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          onUpdate(row.id, {
+                            type: "income",
+                            signedAmount: row.amount,
+                            category: resolveCategoryName("Reembolsos", "income", categoryOptions),
+                            fromAccountName: undefined,
+                            toAccountName: undefined,
+                            linkedTransferId: undefined,
+                            transferGroupId: undefined,
+                            transferDecision: undefined,
+                            learnedRule: false,
+                            ruleId: undefined,
+                            needsReview: false
+                          })
+                        }
+                      >
+                        Reembolso
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          onUpdate(row.id, {
+                            type: "income",
+                            signedAmount: row.amount,
+                            category: defaultCategoryForType("income", categoryOptions),
+                            fromAccountName: undefined,
+                            toAccountName: undefined,
+                            linkedTransferId: undefined,
+                            transferGroupId: undefined,
+                            transferDecision: undefined,
+                            learnedRule: false,
+                            ruleId: undefined,
+                            needsReview: false
+                          })
+                        }
+                      >
+                        Receita
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          onUpdate(row.id, {
+                            type: "expense",
+                            signedAmount: -row.amount,
+                            category: defaultCategoryForType("expense", categoryOptions),
+                            fromAccountName: undefined,
+                            toAccountName: undefined,
+                            linkedTransferId: undefined,
+                            transferGroupId: undefined,
+                            transferDecision: undefined,
+                            learnedRule: false,
+                            ruleId: undefined,
+                            needsReview: false
+                          })
+                        }
+                      >
+                        Despesa
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
                 {!isReliableInternalTransferDescription(row.description) ? (
                   <Button
                     className="w-full"

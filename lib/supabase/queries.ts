@@ -599,14 +599,14 @@ function hasSimilarTransfer(
 }
 
 function isSimilarTransfer(
-  transaction: Pick<Transaction, "type" | "date" | "amount" | "from_account_id" | "to_account_id">,
+  transaction: Pick<TransactionInput, "type" | "date" | "amount" | "from_account_id" | "to_account_id">,
   date: string,
   amount: number,
   fromAccountId: string,
   toAccountId: string
 ) {
   if (transaction.type !== "transfer") return false;
-  if (transaction.from_account_id !== fromAccountId || transaction.to_account_id !== toAccountId) return false;
+  if ((transaction.from_account_id || null) !== fromAccountId || (transaction.to_account_id || null) !== toAccountId) return false;
   if (Math.abs(Number(transaction.amount || 0) - amount) > 0.02) return false;
   return Math.abs(daysBetweenImportDates(transaction.date, date)) <= 3;
 }

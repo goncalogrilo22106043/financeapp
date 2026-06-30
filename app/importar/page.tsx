@@ -1,27 +1,61 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, FileUp, Info } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FileUp, Info, Link2, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { importTransactions } from "@/lib/supabase/queries";
-import type { CategoryType, TransactionType } from "@/lib/types";
-import { euros } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { expenseCategories, incomeCategories } from "@/lib/constants";
+import { fetchAccounts, fetchAllTransactions, importTransactions } from "@/lib/supabase/queries";
+import type { Account, CategoryType, Transaction, TransactionType } from "@/lib/types";
+import { cn, euros } from "@/lib/utils";
 
-type ParsedImportRow = {
-  id: string;
-  selected: boolean;
-  type: TransactionType;
-  amount: number;
-  category: string;
-  description: string;
+type ColumnMapping = {
   date: string;
-  account_name?: string;
-  from_account_name?: string;
-  to_account_name?: string;
-  ignoredReason?: string;
+  description: string;
+  amount: string;
+  debit: string;
+  credit: string;
+  currency: string;
+  balance: string;
+};
+
+type ImportFile = {
+  id: string;
+  fileName: string;
+  accountId: string;
+  accountName: string;
+  headers: string[];
+  records: Record<string, string>[];
+  mapping: ColumnMapping;
+  needsMapping: boolean;
+};
+
+type PreviewRow = {
+  id: string;
+  fileId: string;
+  sourceRow: number;
+  selected: boolean;
+  duplicate: boolean;
+  importAnyway: boolean;
+  type: TransactionType;
+  suggestedType: TransactionType;
+  amount: number;
+  signedAmount: number;
+  date: string;
+  description: string;
+  accountId: string;
+  accountName: string;
+  category: string;
+  confidence: number;
+  reason: string;
+  linkedTransferId?: string;
+  transferGroupId?: string;
+  fromAccountName?: string;
+  toAccountName?: string;
 };
 
 type ImportResult = {
@@ -29,879 +63,899 @@ type ImportResult = {
   skipped: number;
 };
 
-type PdfTextItem = {
-  str: string;
-  transform: number[];
-};
-
-type PdfJs = {
-  version: string;
-  GlobalWorkerOptions: {
-    workerSrc: string;
-  };
-  getDocument: (source: {
-    data: Uint8Array;
-  }) => {
-    promise: Promise<{
-      numPages: number;
-      getPage: (pageNumber: number) => Promise<{
-        getTextContent: (options?: { normalizeWhitespace?: boolean }) => Promise<{
-          items: PdfTextItem[];
-        }>;
-      }>;
-    }>;
-  };
-};
-
-const pdfJsVersion = "4.10.38";
+const steps = [
+  "Carregar ficheiros",
+  "Pré-visualização",
+  "Confirmar transferências",
+  "Guardar"
+];
 
 export default function ImportPage() {
-  const [rows, setRows] = useState<ParsedImportRow[]>([]);
-  const [fileName, setFileName] = useState("");
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [existingTransactions, setExistingTransactions] = useState<Transaction[]>([]);
+  const [files, setFiles] = useState<ImportFile[]>([]);
+  const [rows, setRows] = useState<PreviewRow[]>([]);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [parsing, setParsing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
-  const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const [accountRows, transactionRows] = await Promise.all([
+          fetchAccounts(),
+          fetchAllTransactions()
+        ]);
+        setAccounts(accountRows);
+        setExistingTransactions(transactionRows);
+        setSelectedAccountId(accountRows[0]?.id || "");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Não consegui carregar os dados.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    load();
+  }, []);
 
   const selectedRows = useMemo(
-    () => rows.filter((row) => row.selected),
+    () => rows.filter((row) => row.selected && (!row.duplicate || row.importAnyway)),
     [rows]
-  );
-  const selectedExpenses = useMemo(
-    () => selectedRows.filter((row) => row.type === "expense"),
-    [selectedRows]
   );
   const selectedIncome = useMemo(
     () => selectedRows.filter((row) => row.type === "income"),
+    [selectedRows]
+  );
+  const selectedExpenses = useMemo(
+    () => selectedRows.filter((row) => row.type === "expense"),
     [selectedRows]
   );
   const selectedTransfers = useMemo(
     () => selectedRows.filter((row) => row.type === "transfer"),
     [selectedRows]
   );
-  const expenseTotal = useMemo(
-    () => selectedExpenses.reduce((sum, row) => sum + Math.abs(row.amount), 0),
-    [selectedExpenses]
-  );
   const incomeTotal = useMemo(
-    () => selectedIncome.reduce((sum, row) => sum + Math.abs(row.amount), 0),
+    () => selectedIncome.reduce((sum, row) => sum + row.amount, 0),
     [selectedIncome]
   );
+  const expenseTotal = useMemo(
+    () => selectedExpenses.reduce((sum, row) => sum + row.amount, 0),
+    [selectedExpenses]
+  );
+  const transferTotal = useMemo(
+    () => selectedTransfers.reduce((sum, row) => sum + row.amount, 0),
+    [selectedTransfers]
+  );
+  const needsMapping = files.some((file) => file.needsMapping);
+  const activeStep = rows.length ? (selectedTransfers.length ? 2 : 1) : 0;
 
-  async function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    setResult(null);
+  async function handleFiles(event: ChangeEvent<HTMLInputElement>) {
+    const pickedFiles = Array.from(event.target.files || []);
+    const account = accounts.find((item) => item.id === selectedAccountId);
     setError("");
-    setRows([]);
-    setFileName(file?.name || "");
+    setSuccess("");
+    setResult(null);
 
-    if (!file) return;
+    if (!account) {
+      setError("Escolhe a conta a que este ficheiro pertence.");
+      return;
+    }
 
+    if (!pickedFiles.length) return;
+
+    setParsing(true);
     try {
-      const parsed = await parseImportFile(file);
-      if (!parsed.length) {
-        setError("Não encontrei transações no ficheiro. Confirma se o extrato tem movimentos com data e valor.");
-        return;
-      }
-      setRows(parsed);
+      const parsedFiles = await Promise.all(
+        pickedFiles.map((file) => parseCsvFile(file, account))
+      );
+      const nextFiles = [...files, ...parsedFiles];
+      setFiles(nextFiles);
+      rebuildRows(nextFiles);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não consegui ler esse ficheiro.");
-    }
-  }
-
-  async function handleImport() {
-    setImporting(true);
-    setError("");
-    try {
-      setResult(await importTransactions(selectedRows));
-      setRows([]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao importar para a Supabase.");
     } finally {
-      setImporting(false);
+      setParsing(false);
+      event.target.value = "";
     }
   }
 
-  function updateRow(id: string, updates: Partial<ParsedImportRow>) {
-    setRows((current) => current.map((row) => (row.id === id ? { ...row, ...updates } : row)));
+  function updateMapping(fileId: string, key: keyof ColumnMapping, value: string) {
+    setFiles((current) =>
+      current.map((file) =>
+        file.id === fileId
+          ? {
+              ...file,
+              mapping: { ...file.mapping, [key]: value }
+            }
+          : file
+      )
+    );
+  }
+
+  function applyMapping(fileId: string) {
+    const nextFiles = files.map((file) =>
+      file.id === fileId
+        ? {
+            ...file,
+            needsMapping: !isUsableMapping(file.mapping)
+          }
+        : file
+    );
+    setFiles(nextFiles);
+    rebuildRows(nextFiles);
+  }
+
+  function rebuildRows(sourceFiles = files) {
+    const parsedRows = sourceFiles.flatMap(rowsFromFile);
+    const withDuplicates = markDuplicates(parsedRows, existingTransactions);
+    setRows(detectInternalTransfers(withDuplicates));
+  }
+
+  function updateRow(id: string, updates: Partial<PreviewRow>) {
+    setRows((current) =>
+      current.map((row) =>
+        row.id === id
+          ? {
+              ...row,
+              ...updates,
+              selected: updates.importAnyway ? true : updates.selected ?? row.selected
+            }
+          : row
+      )
+    );
   }
 
   function selectAll(value: boolean) {
     setRows((current) =>
-      current.map((row) => ({ ...row, selected: value }))
+      current.map((row) => ({
+        ...row,
+        selected: row.duplicate && !row.importAnyway ? false : value
+      }))
     );
+  }
+
+  async function handleImport() {
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    setResult(null);
+
+    try {
+      const payload = selectedRows.map((row) => {
+        if (row.type === "transfer") {
+          return {
+            type: row.type,
+            amount: row.amount,
+            description: row.description,
+            date: row.date,
+            from_account_name: row.fromAccountName,
+            to_account_name: row.toAccountName
+          };
+        }
+
+        return {
+          type: row.type,
+          amount: row.amount,
+          category: row.category || "Outros",
+          description: row.description,
+          date: row.date,
+          account_name: row.accountName
+        };
+      });
+
+      const importResult = await importTransactions(payload);
+      setResult(importResult);
+      setSuccess(`Importação guardada: ${importResult.inserted} movimentos criados.`);
+      setFiles([]);
+      setRows([]);
+      setExistingTransactions(await fetchAllTransactions());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao guardar a importação.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <AppShell>
-      <div className="mb-6">
-        <Button asChild className="mb-4" size="sm" variant="ghost">
-          <Link href="/transacoes">
-            <ArrowLeft className="h-4 w-4" />
-            Voltar
-          </Link>
-        </Button>
-        <p className="text-muted-foreground">Revolut Excel/CSV ou Millennium PDF</p>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight">Importar transações</h1>
+      <div className="mb-6 flex items-start justify-between gap-3">
+        <div>
+          <Button asChild className="mb-4" size="sm" variant="ghost">
+            <Link href="/transacoes">
+              <ArrowLeft className="h-4 w-4" />
+              Voltar
+            </Link>
+          </Button>
+          <p className="text-muted-foreground">Revolut e Millennium CSV</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight">Importar extratos</h1>
+        </div>
       </div>
 
-      <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,0.55fr)_minmax(0,1.45fr)]">
-        <Card className="p-5">
-          <label className="grid cursor-pointer place-items-center rounded-[2rem] border border-dashed border-border bg-muted/40 p-8 text-center md:p-5">
+      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+        {steps.map((step, index) => (
+          <div
+            className={cn(
+              "rounded-2xl border border-border bg-card p-3 text-sm font-semibold text-muted-foreground",
+              index <= activeStep && "border-foreground/20 bg-foreground text-background"
+            )}
+            key={step}
+          >
+            <span className="mr-2 opacity-70">{index + 1}</span>
+            {step}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(18rem,0.55fr)_minmax(0,1.45fr)]">
+        <Card className="min-w-0 p-5">
+          <div className="mb-4">
+            <label className="mb-2 block text-sm font-semibold">Selecionar conta</label>
+            <Select
+              disabled={loading || !accounts.length}
+              value={selectedAccountId}
+              onChange={(event) => setSelectedAccountId(event.target.value)}
+            >
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <label className="grid cursor-pointer place-items-center rounded-[2rem] border border-dashed border-border bg-muted/40 p-7 text-center">
             <FileUp className="mb-4 h-10 w-10 text-muted-foreground" />
-            <span className="text-lg font-bold">Escolher ficheiro do banco</span>
+            <span className="text-lg font-bold">Escolher CSV</span>
             <span className="mt-2 max-w-sm text-sm text-muted-foreground">
-              Revolut funciona em Excel/CSV. Millennium funciona em PDF. Vais confirmar cada transação antes de importar.
+              Carrega um extrato de cada vez e escolhe a conta certa antes de carregar.
             </span>
-            <input accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf" className="sr-only" type="file" onChange={handleFile} />
+            <input
+              accept=".csv,text/csv"
+              className="sr-only"
+              multiple
+              type="file"
+              onChange={handleFiles}
+            />
           </label>
 
-          {fileName ? <p className="mt-4 text-sm text-muted-foreground">Ficheiro: {fileName}</p> : null}
-          {error ? <p className="mt-4 rounded-2xl bg-rose-500/10 p-4 text-sm font-medium text-rose-600">{error}</p> : null}
-          {result ? (
-            <div className="mt-4 rounded-2xl bg-emerald-500/10 p-4 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-              <CheckCircle2 className="mr-2 inline h-4 w-4" />
-              Importadas {result.inserted} transações. Ignoradas {result.skipped} duplicadas.
+          {files.length ? (
+            <div className="mt-4 space-y-2">
+              {files.map((file) => (
+                <div className="rounded-2xl bg-muted p-3 text-sm" key={file.id}>
+                  <p className="break-words font-semibold">{file.fileName}</p>
+                  <p className="text-muted-foreground">{file.accountName}</p>
+                </div>
+              ))}
             </div>
+          ) : null}
+
+          {error ? (
+            <p className="mt-4 rounded-2xl bg-rose-500/10 p-4 text-sm font-medium text-rose-600">
+              {error}
+            </p>
+          ) : null}
+
+          {success ? (
+            <p className="mt-4 rounded-2xl bg-emerald-500/10 p-4 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="mr-2 inline h-4 w-4" />
+              {success}
+            </p>
+          ) : null}
+
+          {result ? (
+            <p className="mt-3 text-sm text-muted-foreground">
+              Guardadas {result.inserted}. Ignoradas {result.skipped}.
+            </p>
           ) : null}
         </Card>
 
-        <Card className="min-w-0 p-5">
-          <div className="mb-4 flex items-start gap-3">
-            <Info className="mt-1 h-5 w-5 text-muted-foreground" />
-            <div>
-              <h2 className="text-xl font-bold">Pré-visualização</h2>
-              <p className="text-sm text-muted-foreground">
-                Confirma o que entra. Reembolsos, carregamentos Apple Pay/Open Banking e transferências para ti ficam ignorados.
-              </p>
-            </div>
-          </div>
-
-          <div className="mb-4 grid grid-cols-2 gap-3">
-            <div className="rounded-2xl bg-muted p-4">
-              <p className="text-xs text-muted-foreground">Selecionadas</p>
-              <strong className="text-2xl">{selectedRows.length}</strong>
-            </div>
-            <div className="rounded-2xl bg-muted p-4">
-              <p className="text-xs text-muted-foreground">Transferências</p>
-              <strong className="text-2xl">{selectedTransfers.length}</strong>
-            </div>
-            <div className="rounded-2xl bg-emerald-500/10 p-4">
-              <p className="text-xs text-emerald-700 dark:text-emerald-300">Receitas</p>
-              <strong className="text-2xl text-emerald-700 dark:text-emerald-300">{euros(incomeTotal)}</strong>
-            </div>
-            <div className="rounded-2xl bg-rose-500/10 p-4">
-              <p className="text-xs text-rose-700 dark:text-rose-300">Despesas</p>
-              <strong className="text-2xl text-rose-700 dark:text-rose-300">{euros(expenseTotal)}</strong>
-            </div>
-          </div>
-
-          {rows.length ? (
-            <div className="mb-3 flex gap-2">
-              <Button size="sm" variant="secondary" onClick={() => selectAll(true)}>
-                Selecionar tudo
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => selectAll(false)}>
-                Limpar
-              </Button>
-            </div>
-          ) : null}
-
-          <div className="max-h-[34rem] min-w-0 space-y-2 overflow-y-auto overflow-x-hidden pr-1">
-            {rows.map((row) => (
-              <div
-                className={`min-w-0 rounded-2xl border border-border p-3 ${
-                  row.ignoredReason ? "opacity-60" : ""
-                }`}
-                key={row.id}
-              >
-                <div className="flex min-w-0 items-start gap-3">
-                  <input
-                    checked={row.selected}
-                    className="mt-1 h-5 w-5 shrink-0 accent-emerald-600"
-                    type="checkbox"
-                    onChange={(event) => updateRow(row.id, { selected: event.target.checked })}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-start justify-between gap-3">
-                      <p className="min-w-0 break-words font-semibold leading-snug">{row.description}</p>
-                      <strong className={`shrink-0 whitespace-nowrap ${row.type === "income" ? "text-emerald-600" : row.type === "expense" ? "text-rose-600" : "text-sky-600"}`}>
-                        {row.type === "income" ? "+" : row.type === "expense" ? "-" : ""}
-                        {euros(Math.abs(row.amount))}
-                      </strong>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {row.date} · {accountLabel(row)} · {row.type === "transfer" ? "Transferência" : row.category}
-                    </p>
-                    {row.ignoredReason && !row.selected ? (
-                      <p className="mt-2 rounded-xl bg-muted px-3 py-2 text-xs font-medium text-muted-foreground">
-                        Ignorada automaticamente: {row.ignoredReason}
-                      </p>
-                    ) : (
-                      <div className="mt-3 grid gap-2 sm:grid-cols-[8rem_1fr]">
-                        <select
-                          className="h-10 rounded-xl border border-border bg-background px-3 text-sm"
-                          value={row.type}
-                          onChange={(event) =>
-                            updateRow(row.id, { type: event.target.value as TransactionType })
-                          }
-                        >
-                          <option value="expense">Despesa</option>
-                          <option value="income">Receita</option>
-                          <option value="transfer">Transferência</option>
-                        </select>
-                        <input
-                          className="h-10 rounded-xl border border-border bg-background px-3 text-sm"
-                          value={row.category}
-                          onChange={(event) => updateRow(row.id, { category: event.target.value })}
-                        />
-                      </div>
-                    )}
-                  </div>
+        <div className="min-w-0 space-y-4">
+          {needsMapping ? (
+            <Card className="min-w-0 p-5">
+              <div className="mb-4 flex items-start gap-3">
+                <Info className="mt-1 h-5 w-5 text-muted-foreground" />
+                <div>
+                  <h2 className="text-xl font-bold">Mapear colunas</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Não reconheci todas as colunas. Diz-me onde está cada campo e aplico a leitura.
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
 
-          <Button className="mt-5 w-full" disabled={!selectedRows.length || importing} size="lg" onClick={handleImport}>
-            {importing ? "A importar..." : "Importar selecionadas"}
-          </Button>
-        </Card>
+              <div className="space-y-4">
+                {files
+                  .filter((file) => file.needsMapping)
+                  .map((file) => (
+                    <div className="rounded-3xl border border-border p-4" key={file.id}>
+                      <p className="mb-3 break-words font-semibold">{file.fileName}</p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <MappingSelect file={file} label="Data" name="date" onChange={updateMapping} />
+                        <MappingSelect file={file} label="Descrição" name="description" onChange={updateMapping} />
+                        <MappingSelect file={file} label="Valor" name="amount" onChange={updateMapping} />
+                        <MappingSelect file={file} label="Débito" name="debit" onChange={updateMapping} />
+                        <MappingSelect file={file} label="Crédito" name="credit" onChange={updateMapping} />
+                        <MappingSelect file={file} label="Moeda" name="currency" onChange={updateMapping} />
+                      </div>
+                      <Button className="mt-4 w-full" onClick={() => applyMapping(file.id)}>
+                        Aplicar mapeamento
+                      </Button>
+                    </div>
+                  ))}
+              </div>
+            </Card>
+          ) : null}
+
+          <Card className="min-w-0 p-5">
+            <div className="mb-4 flex items-start gap-3">
+              <ShieldCheck className="mt-1 h-5 w-5 text-muted-foreground" />
+              <div>
+                <h2 className="text-xl font-bold">Pré-visualização</h2>
+                <p className="text-sm text-muted-foreground">
+                  Nada é guardado sem confirmares. Transferências entre contas não contam como receita nem despesa.
+                </p>
+              </div>
+            </div>
+
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <Metric label="Selecionadas" value={String(selectedRows.length)} />
+              <Metric label="Receitas" tone="income" value={euros(incomeTotal)} />
+              <Metric label="Despesas" tone="expense" value={euros(expenseTotal)} />
+              <Metric label="Transferências" tone="transfer" value={euros(transferTotal)} />
+            </div>
+
+            {rows.length ? (
+              <div className="mb-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="secondary" onClick={() => selectAll(true)}>
+                  Selecionar tudo
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => selectAll(false)}>
+                  Limpar
+                </Button>
+              </div>
+            ) : null}
+
+            <div className="max-h-[40rem] min-w-0 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
+              {!rows.length ? (
+                <div className="rounded-3xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                  {parsing ? "A ler o ficheiro..." : "Carrega um CSV para veres os movimentos antes de guardar."}
+                </div>
+              ) : null}
+
+              {rows.map((row) => (
+                <PreviewItem key={row.id} row={row} onUpdate={updateRow} />
+              ))}
+            </div>
+
+            <Button
+              className="mt-5 w-full"
+              disabled={!selectedRows.length || saving || needsMapping}
+              size="lg"
+              onClick={handleImport}
+            >
+              {saving ? "A guardar..." : "Guardar importação"}
+            </Button>
+          </Card>
+        </div>
       </div>
     </AppShell>
   );
 }
 
-function accountLabel(row: ParsedImportRow) {
-  if (row.type === "transfer") {
-    return `${row.from_account_name || "Origem"} -> ${row.to_account_name || "Destino"}`;
-  }
-
-  return row.account_name || "Conta";
-}
-
-async function parseImportFile(file: File): Promise<ParsedImportRow[]> {
-  const name = file.name.toLowerCase();
-
-  if (name.endsWith(".pdf") || file.type === "application/pdf") {
-    return parseMillenniumPdf(file);
-  }
-
-  if (name.endsWith(".xlsx")) {
-    return parseRevolutRows(await parseXlsx(file));
-  }
-
-  if (name.endsWith(".xls")) {
-    throw new Error("O formato .xls antigo não é suportado. Abre o ficheiro no Excel/Numbers e guarda como .xlsx.");
-  }
-
-  return parseRevolutRows(parseCsv(await file.text()));
-}
-
-async function parseMillenniumPdf(file: File): Promise<ParsedImportRow[]> {
-  const lines = await extractPdfLines(file);
-  const movements = parseMillenniumLines(lines);
-
-  if (!movements.length) {
-    throw new Error("Não consegui encontrar movimentos nesse PDF. Se conseguires, envia-me um PDF de exemplo do Millennium para afinar o formato.");
-  }
-
-  return movements;
-}
-
-async function extractPdfLines(file: File) {
-  const pdfjsUrl = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfJsVersion}/build/pdf.mjs`;
-  const pdfjs = (await import(/* webpackIgnore: true */ pdfjsUrl)) as PdfJs;
-  pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfJsVersion}/build/pdf.worker.mjs`;
-
-  const pdf = await pdfjs.getDocument({
-    data: new Uint8Array(await file.arrayBuffer())
-  }).promise;
-  const lines: string[] = [];
-
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const textContent = await page.getTextContent({ normalizeWhitespace: true });
-    lines.push(...itemsToLines(textContent.items));
-  }
-
-  return lines.map(cleanWhitespace).filter(Boolean);
-}
-
-function itemsToLines(items: PdfTextItem[]) {
-  const sorted = items
-    .filter((item) => item.str.trim())
-    .map((item) => ({
-      text: item.str,
-      x: item.transform[4] || 0,
-      y: Math.round(item.transform[5] || 0)
-    }))
-    .sort((a, b) => b.y - a.y || a.x - b.x);
-
-  const rows: Array<{ y: number; items: Array<{ text: string; x: number }> }> = [];
-
-  sorted.forEach((item) => {
-    const row = rows.find((candidate) => Math.abs(candidate.y - item.y) <= 2);
-    if (row) {
-      row.items.push(item);
-      row.y = Math.round((row.y + item.y) / 2);
-    } else {
-      rows.push({ y: item.y, items: [item] });
-    }
-  });
-
-  return rows.map((row) =>
-    row.items
-      .sort((a, b) => a.x - b.x)
-      .map((item) => item.text)
-      .join(" ")
+function MappingSelect({
+  file,
+  label,
+  name,
+  onChange
+}: {
+  file: ImportFile;
+  label: string;
+  name: keyof ColumnMapping;
+  onChange: (fileId: string, key: keyof ColumnMapping, value: string) => void;
+}) {
+  return (
+    <label className="text-sm font-semibold">
+      {label}
+      <Select
+        className="mt-2"
+        value={file.mapping[name]}
+        onChange={(event) => onChange(file.id, name, event.target.value)}
+      >
+        <option value="">Não usar</option>
+        {file.headers.map((header) => (
+          <option key={header} value={header}>
+            {header}
+          </option>
+        ))}
+      </Select>
+    </label>
   );
 }
 
-function parseMillenniumLines(lines: string[]): ParsedImportRow[] {
-  const chunks: string[] = [];
-  let current = "";
-  const statementYear = getMillenniumStatementYear(lines);
-  let previousBalance = getMillenniumInitialBalance(lines);
-  let movementStarted = false;
-  let tableStarted = false;
-  let movementEnded = false;
-
-  lines.forEach((line) => {
-    if (movementEnded) return;
-
-    const normalizedLine = normalizeValue(line);
-    if (normalizedLine.includes("descritivo")) {
-      tableStarted = true;
-      return;
-    }
-
-    if (normalizedLine.includes("saldo inicial")) {
-      movementStarted = true;
-      tableStarted = true;
-      return;
-    }
-
-    if (!movementStarted || !tableStarted) return;
-
-    if (normalizedLine.includes("saldo final")) {
-      if (current) chunks.push(current);
-      current = "";
-      movementEnded = true;
-      return;
-    }
-
-    if (isPdfNoiseLine(line)) return;
-
-    if (startsWithDate(line)) {
-      if (current) chunks.push(current);
-      current = line;
-      return;
-    }
-
-    if (current && !startsWithDate(line)) {
-      current = `${current} ${line}`;
-    }
-  });
-
-  if (current) chunks.push(current);
-
-  return chunks
-    .map((chunk) => {
-      const parsed = toMillenniumRow(chunk, statementYear, previousBalance);
-      if (Number.isFinite(parsed?.balance)) {
-        previousBalance = parsed?.balance || previousBalance;
-      }
-      return parsed?.row || null;
-    })
-    .filter((row): row is ParsedImportRow => Boolean(row))
-    .map((row, index) => ({ ...row, id: `${row.id}|millennium|${index}` }));
+function Metric({
+  label,
+  value,
+  tone
+}: {
+  label: string;
+  value: string;
+  tone?: "income" | "expense" | "transfer";
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-2xl bg-muted p-4",
+        tone === "income" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+        tone === "expense" && "bg-rose-500/10 text-rose-700 dark:text-rose-300",
+        tone === "transfer" && "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+      )}
+    >
+      <p className="text-xs opacity-75">{label}</p>
+      <strong className="text-xl">{value}</strong>
+    </div>
+  );
 }
 
-function toMillenniumRow(
-  line: string,
-  statementYear: string,
-  previousBalance: number
-): { row: ParsedImportRow; balance: number } | null {
-  const dateMatch = line.match(/\b(\d{1,2}[.]\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b/);
-  if (!dateMatch) return null;
+function PreviewItem({
+  row,
+  onUpdate
+}: {
+  row: PreviewRow;
+  onUpdate: (id: string, updates: Partial<PreviewRow>) => void;
+}) {
+  const categories = row.type === "income" ? incomeCategories : expenseCategories;
+  const isTransferCounterpart = row.type === "transfer" && !row.selected && row.linkedTransferId;
 
-  const moneyMatches = findMoneyMatches(line);
-  if (!moneyMatches.length) return null;
+  return (
+    <div
+      className={cn(
+        "min-w-0 rounded-3xl border border-border p-4",
+        !row.selected && "opacity-65",
+        row.duplicate && "border-amber-500/40 bg-amber-500/5",
+        row.type === "transfer" && "border-sky-500/30 bg-sky-500/5"
+      )}
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <input
+          checked={row.selected}
+          className="mt-1 h-5 w-5 shrink-0 accent-emerald-600"
+          disabled={isTransferCounterpart}
+          type="checkbox"
+          onChange={(event) => onUpdate(row.id, { selected: event.target.checked })}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="break-words font-semibold leading-snug">{row.description}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {row.date} · {row.accountName} · confiança {row.confidence}%
+              </p>
+            </div>
+            <strong
+              className={cn(
+                "shrink-0 whitespace-nowrap",
+                row.type === "income" && "text-emerald-600",
+                row.type === "expense" && "text-rose-600",
+                row.type === "transfer" && "text-sky-600"
+              )}
+            >
+              {row.signedAmount > 0 ? "+" : row.signedAmount < 0 ? "-" : ""}
+              {euros(row.amount)}
+            </strong>
+          </div>
 
-  const amountMatch = moneyMatches.length >= 2 ? moneyMatches[moneyMatches.length - 2] : moneyMatches[0];
-  const balanceMatch = moneyMatches[moneyMatches.length - 1];
-  const balance = parseMoney(balanceMatch.raw);
-  const amount = parseMillenniumSignedAmount(amountMatch.raw, line, previousBalance, balance);
-  if (!Number.isFinite(amount) || amount === 0) return null;
+          <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
+            {row.type === "transfer" ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-3 py-1 text-sky-700 dark:text-sky-300">
+                <Link2 className="h-3 w-3" />
+                Possível transferência
+              </span>
+            ) : null}
+            {row.duplicate ? (
+              <span className="rounded-full bg-amber-500/10 px-3 py-1 text-amber-700 dark:text-amber-300">
+                Possível duplicado
+              </span>
+            ) : null}
+            {row.reason ? (
+              <span className="rounded-full bg-muted px-3 py-1 text-muted-foreground">
+                {row.reason}
+              </span>
+            ) : null}
+          </div>
 
-  const date = parseMillenniumDate(dateMatch[1], statementYear);
-  if (!date) return null;
+          {row.duplicate && !row.importAnyway ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" onClick={() => onUpdate(row.id, { selected: false })}>
+                Ignorar
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => onUpdate(row.id, { importAnyway: true })}>
+                Importar mesmo assim
+              </Button>
+            </div>
+          ) : null}
 
-  const description = cleanMillenniumDescription(line, dateMatch[1], moneyMatches.map((match) => match.raw));
-  const normalizedDescription = normalizeValue(description);
-  const isIncome = amount > 0;
-  const isRevolutTopUp = normalizedDescription.includes("revolut");
-  const isRevolutToMillennium = isIncome && isOwnMillenniumIncomeTransfer(normalizedDescription);
-  const type: TransactionType = isRevolutTopUp || isRevolutToMillennium ? "transfer" : isIncome ? "income" : "expense";
-  const ignoredReason = type === "transfer" ? "" : getIgnoredReason(normalizedDescription, "", isIncome);
+          <div className="mt-3 grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
+            <Select
+              value={row.type}
+              onChange={(event) =>
+                onUpdate(row.id, {
+                  type: event.target.value as TransactionType,
+                  category: "Outros",
+                  selected: row.duplicate ? row.importAnyway : row.selected
+                })
+              }
+            >
+              <option value="expense">Despesa</option>
+              <option value="income">Receita</option>
+              <option value="transfer">Transferência</option>
+            </Select>
+
+            {row.type === "transfer" ? (
+              <div className="rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground">
+                {row.fromAccountName || "Origem"} → {row.toAccountName || "Destino"}
+                {!row.selected && row.linkedTransferId ? " · já incluída na transferência ligada" : ""}
+              </div>
+            ) : (
+              <Select
+                value={row.category}
+                onChange={(event) => onUpdate(row.id, { category: event.target.value })}
+              >
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
+
+          {row.type === "transfer" ? (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <Input
+                value={row.fromAccountName || ""}
+                placeholder="Conta de origem"
+                onChange={(event) => onUpdate(row.id, { fromAccountName: event.target.value })}
+              />
+              <Input
+                value={row.toAccountName || ""}
+                placeholder="Conta de destino"
+                onChange={(event) => onUpdate(row.id, { toAccountName: event.target.value })}
+              />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+async function parseCsvFile(file: File, account: Account): Promise<ImportFile> {
+  if (!file.name.toLowerCase().endsWith(".csv") && file.type && !file.type.includes("csv")) {
+    throw new Error("Por agora esta importação inteligente aceita CSV. Exporta o extrato em CSV no banco.");
+  }
+
+  const records = parseCsv(await file.text());
+  const headers = Object.keys(records[0] || {});
+  const mapping = detectMapping(headers);
+  const id = `${file.name}-${account.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   return {
-    row: {
-      id: [date, amount.toFixed(2), description].join("|"),
-      selected: !ignoredReason,
-      type,
-      amount: Math.abs(amount),
-      category: type === "transfer" ? "Transferência" : guessMillenniumCategory(description, type as CategoryType),
-      description,
-      date,
-      account_name: type === "transfer" ? undefined : "Millennium",
-      from_account_name: isRevolutToMillennium ? "Revolut" : isRevolutTopUp ? "Millennium" : undefined,
-      to_account_name: isRevolutToMillennium ? "Millennium" : isRevolutTopUp ? "Revolut" : undefined,
-      ignoredReason
-    },
-    balance
+    id,
+    fileName: file.name,
+    accountId: account.id,
+    accountName: account.name,
+    headers,
+    records,
+    mapping,
+    needsMapping: !isUsableMapping(mapping)
   };
 }
 
-function findMoneyMatches(line: string) {
-  const matches = Array.from(
-    line.matchAll(/(?:[-+]\s*)?\d{1,3}(?:[ .]\d{3})*[,.]\d{2}\s*(?:[-+]|EUR|€|D|C|CR|DR)?/gi)
-  ).filter((match) => {
-    const previous = line[(match.index || 0) - 1] || "";
-    return !/[A-Z0-9]/i.test(previous);
+function rowsFromFile(file: ImportFile): PreviewRow[] {
+  if (!isUsableMapping(file.mapping)) return [];
+
+  return file.records
+    .map((record, index) => {
+      const date = parseDate(readField(record, file.mapping.date));
+      const signedAmount = parseSignedAmount(record, file.mapping);
+      const description = cleanDescription(readField(record, file.mapping.description));
+
+      if (!date || !description || !Number.isFinite(signedAmount) || signedAmount === 0) {
+        return null;
+      }
+
+      const suggestedType: CategoryType = signedAmount > 0 ? "income" : "expense";
+      const suggestion = suggestCategory(description, suggestedType);
+
+      return {
+        id: `${file.id}-${index}-${date}-${signedAmount}`,
+        fileId: file.id,
+        sourceRow: index,
+        selected: true,
+        duplicate: false,
+        importAnyway: false,
+        type: suggestedType,
+        suggestedType,
+        amount: Math.abs(roundMoney(signedAmount)),
+        signedAmount: roundMoney(signedAmount),
+        date,
+        description,
+        accountId: file.accountId,
+        accountName: file.accountName,
+        category: suggestion.category,
+        confidence: suggestion.confidence,
+        reason: suggestion.reason
+      };
+    })
+    .filter((row): row is PreviewRow => Boolean(row));
+}
+
+function detectMapping(headers: string[]): ColumnMapping {
+  const find = (...keywords: string[]) =>
+    headers.find((header) => keywords.some((keyword) => normalizeValue(header).includes(keyword))) || "";
+
+  return {
+    date: find("data", "date", "completed", "started"),
+    description: find("descricao", "descrição", "description", "descritivo", "merchant", "counterparty", "name"),
+    amount: find("amount", "valor", "montante", "value"),
+    debit: find("debito", "débito", "debit", "paid out", "money out", "saida", "saída"),
+    credit: find("credito", "crédito", "credit", "paid in", "money in", "entrada"),
+    currency: find("currency", "moeda"),
+    balance: find("balance", "saldo")
+  };
+}
+
+function isUsableMapping(mapping: ColumnMapping) {
+  return Boolean(mapping.date && mapping.description && (mapping.amount || mapping.debit || mapping.credit));
+}
+
+function markDuplicates(rows: PreviewRow[], existing: Transaction[]) {
+  return rows.map((row) => {
+    const duplicate = existing.some((transaction) => {
+      const sameAccount =
+        transaction.account_id === row.accountId ||
+        transaction.from_account_id === row.accountId ||
+        transaction.to_account_id === row.accountId;
+      const sameDate = Math.abs(daysBetween(transaction.date, row.date)) <= 1;
+      const sameAmount = Math.abs(Number(transaction.amount) - row.amount) <= 0.02;
+      const similarDescription = descriptionSimilarity(transaction.description || "", row.description) >= 0.72;
+
+      return sameAccount && sameDate && sameAmount && similarDescription;
+    });
+
+    return duplicate
+      ? {
+          ...row,
+          selected: false,
+          duplicate: true,
+          confidence: Math.min(row.confidence, 55),
+          reason: "Possível duplicado"
+        }
+      : row;
   });
-
-  return matches.map((match) => ({
-    raw: match[0].trim(),
-    index: match.index || 0
-  }));
 }
 
-function parseMillenniumSignedAmount(raw: string, line: string, previousBalance: number, currentBalance: number) {
-  const fallbackAmount = parseSignedMoney(raw, line);
-  const amount = Math.abs(parseMoney(raw));
+function detectInternalTransfers(rows: PreviewRow[]) {
+  const next = rows.map((row) => ({ ...row }));
+  const used = new Set<string>();
 
-  if (Number.isFinite(previousBalance) && Number.isFinite(currentBalance)) {
-    const delta = roundMoney(currentBalance - previousBalance);
-    if (Math.abs(Math.abs(delta) - amount) <= 0.02) {
-      return delta;
-    }
+  for (const negative of next) {
+    if (used.has(negative.id) || negative.signedAmount >= 0) continue;
+
+    const positive = next.find((candidate) => {
+      if (used.has(candidate.id) || candidate.id === negative.id) return false;
+      if (candidate.accountId === negative.accountId || candidate.signedAmount <= 0) return false;
+      if (Math.abs(daysBetween(candidate.date, negative.date)) > 3) return false;
+      if (!amountsMatch(candidate.amount, negative.amount)) return false;
+      return hasTransferSignal(candidate.description, negative.description, candidate.accountName, negative.accountName);
+    });
+
+    if (!positive) continue;
+
+    const groupId = `transfer-${negative.id}-${positive.id}`;
+    negative.type = "transfer";
+    negative.suggestedType = "transfer";
+    negative.category = "Transferência";
+    negative.confidence = 94;
+    negative.reason = "Possível transferência interna";
+    negative.transferGroupId = groupId;
+    negative.linkedTransferId = positive.id;
+    negative.fromAccountName = negative.accountName;
+    negative.toAccountName = positive.accountName;
+    negative.selected = !negative.duplicate;
+
+    positive.type = "transfer";
+    positive.suggestedType = "transfer";
+    positive.category = "Transferência";
+    positive.confidence = 94;
+    positive.reason = "Ligada à transferência anterior";
+    positive.transferGroupId = groupId;
+    positive.linkedTransferId = negative.id;
+    positive.fromAccountName = negative.accountName;
+    positive.toAccountName = positive.accountName;
+    positive.selected = false;
+
+    used.add(negative.id);
+    used.add(positive.id);
   }
 
-  return fallbackAmount;
+  return next;
 }
 
-function parseSignedMoney(raw: string, line: string) {
-  const normalizedRaw = normalizeValue(raw);
-  const normalizedLine = normalizeValue(line);
-  const amount = Math.abs(parseMoney(raw));
-
-  if (
-    normalizedRaw.includes("-") ||
-    normalizedRaw.endsWith("d") ||
-    normalizedRaw.endsWith("dr") ||
-    /\b(debito|pagamento|compra|levantamento|comissao|imposto|sepa dd|transferencia emitida)\b/.test(normalizedLine)
-  ) {
-    return -amount;
-  }
-
-  if (
-    normalizedRaw.includes("+") ||
-    normalizedRaw.endsWith("c") ||
-    normalizedRaw.endsWith("cr") ||
-    /\b(credito|deposito|vencimento|salario|transferencia recebida|trf recebida)\b/.test(normalizedLine)
-  ) {
-    return amount;
-  }
-
-  return -amount;
-}
-
-function isOwnMillenniumIncomeTransfer(description: string) {
-  const hasOwnName =
-    description.includes("goncalo grilo") ||
-    description.includes("goncalo galvao grilo") ||
-    description.includes("goncalo galvao de sousa grilo");
-
-  return hasOwnName && (description.includes("trf p/o") || description.includes("trf. p/o"));
-}
-
-function getMillenniumStatementYear(lines: string[]) {
-  const joined = lines.join(" ");
-  const rangeMatch = joined.match(/EXTRATO DE\s+(\d{4})[/-]\d{1,2}[/-]\d{1,2}/i);
-  if (rangeMatch) return rangeMatch[1];
-
-  const statementMatch = joined.match(/\bN\.\s*(\d{4})\//i);
-  if (statementMatch) return statementMatch[1];
-
-  return String(new Date().getFullYear());
-}
-
-function getMillenniumInitialBalance(lines: string[]) {
-  const line = lines.find((item) => normalizeValue(item).includes("saldo inicial")) || "";
-  const match = findMoneyMatches(line)[0];
-  return match ? parseMoney(match.raw) : Number.NaN;
-}
-
-function parseMillenniumDate(value: string, statementYear: string) {
-  const shortDate = value.match(/^(\d{1,2})\.(\d{1,2})$/);
-  if (shortDate) {
-    return `${statementYear}-${shortDate[1].padStart(2, "0")}-${shortDate[2].padStart(2, "0")}`;
-  }
-
-  return parseDate(value);
-}
-
-function cleanMillenniumDescription(line: string, date: string, moneyValues: string[]) {
-  let description = line.replace(date, " ");
-  description = description.replace(/\b(\d{1,2}[.]\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b/g, " ");
-  moneyValues.forEach((value) => {
-    description = description.replace(value, " ");
-  });
-  return cleanWhitespace(description).replace(/^[-:./\s]+|[-:./\s]+$/g, "") || "Movimento Millennium";
-}
-
-function guessMillenniumCategory(description: string, type: CategoryType) {
+function suggestCategory(description: string, type: CategoryType) {
   const text = normalizeValue(description);
 
   if (type === "income") {
-    if (text.includes("salario") || text.includes("vencimento")) return "Salário";
-    if (text.includes("investimento") || text.includes("juros") || text.includes("dividendo")) return "Investimentos";
-    return "Outros";
+    if (matchesAny(text, ["vinted"])) return suggestion("Vinted", 92, "Vinted");
+    if (matchesAny(text, ["cgsneakers", "cg sneakers"])) return suggestion("CGSneakers", 92, "CGSneakers");
+    if (matchesAny(text, ["salario", "salário", "vencimento", "ordenado"])) return suggestion("Salário", 90, "Salário");
+    if (matchesAny(text, ["dividendo", "juros", "investimento"])) return suggestion("Investimentos", 86, "Investimentos");
+    if (matchesAny(text, ["refund", "reembolso", "devolucao", "devolução"])) return suggestion("Reembolsos", 88, "Reembolso");
+    if (matchesAny(text, ["video", "videografia", "film", "fotografia"])) return suggestion("Videografia", 82, "Videografia");
+    return suggestion("Outros", 70, "Receita detetada");
   }
 
-  if (text.includes("combustivel") || text.includes("galp") || text.includes("repsol") || text.includes("bp ")) return "Combustível";
-  if (text.includes("portagem") || text.includes("viaverde") || text.includes("via verde")) return "Portagens";
-  if (text.includes("continente") || text.includes("pingo doce") || text.includes("lidl") || text.includes("mercadona")) return "Alimentação";
-  if (text.includes("gin")) return "Ginásio";
-  if (text.includes("netflix") || text.includes("spotify") || text.includes("apple.com") || text.includes("subscr")) return "Subscrições";
-  if (text.includes("renda") || text.includes("casa") || text.includes("condominio")) return "Casa";
-  if (text.includes("farmacia") || text.includes("saude")) return "Saúde / cuidados pessoais";
-  return "Outros";
-}
-
-function startsWithDate(line: string) {
-  return /^\s*(\d{1,2}[.]\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b/.test(line);
-}
-
-function isPdfNoiseLine(line: string) {
-  const normalized = normalizeValue(line);
-  return (
-    !normalized ||
-    normalized.includes("saldo anterior") ||
-    normalized.includes("saldo contabilistico") ||
-    normalized.includes("saldo disponivel") ||
-    normalized.includes("pagina ") ||
-    normalized.includes("millennium bcp") ||
-    normalized.includes("a transportar") ||
-    normalized.includes("transporte") ||
-    normalized.includes("capital social") ||
-    normalized.includes("matric") ||
-    normalized.includes("reg. com") ||
-    normalized.includes("data movimento") ||
-    normalized.includes("data valor") ||
-    normalized.includes("descricao") ||
-    normalized.includes("valor") && normalized.includes("saldo")
-  );
-}
-
-function parseRevolutRows(records: string[][]): ParsedImportRow[] {
-  if (records.length < 2) return [];
-
-  const headerIndex = findHeaderRow(records);
-  if (headerIndex < 0) return [];
-
-  const headers = records[headerIndex].map(normalizeHeader);
-  const body = records.slice(headerIndex + 1);
-
-  return body
-    .map((record) => recordToObject(headers, record))
-    .map(toImportRow)
-    .filter((row): row is ParsedImportRow => Boolean(row))
-    .map((row, index) => ({ ...row, id: `${row.id}|${index}` }));
-}
-
-function findHeaderRow(records: string[][]) {
-  return records.findIndex((row) => {
-    const normalized = row.map(normalizeHeader);
-    const joined = normalized.join(" ");
-    const hasDate = joined.includes("date") || joined.includes("data");
-    const hasAmount =
-      joined.includes("amount") ||
-      joined.includes("valor") ||
-      joined.includes("montante") ||
-      joined.includes("paid in") ||
-      joined.includes("paid out");
-    return hasDate && hasAmount;
-  });
-}
-
-function toImportRow(row: Record<string, string>): ParsedImportRow | null {
-  const amountMatch = pickMatch(row, ["amount", "valor", "montante"]);
-  const paidInMatch = pickMatch(row, ["paid in", "money in", "in"]);
-  const paidOutMatch = pickMatch(row, ["paid out", "money out", "out"]);
-  let amount = amountMatch.value ? parseMoney(amountMatch.value) : Number.NaN;
-
-  if (!Number.isFinite(amount) && paidInMatch.value) {
-    amount = Math.abs(parseMoney(paidInMatch.value));
+  if (matchesAny(text, ["spotify", "netflix", "apple", "adobe", "google", "openai", "notion"])) {
+    return suggestion("Subscrições", 90, "Subscrição");
+  }
+  if (matchesAny(text, ["galp", "repsol", "bp ", "cepsa", "prio", "combustivel", "combustível"])) {
+    return suggestion("Combustível", 90, "Combustível");
+  }
+  if (matchesAny(text, ["portagem", "via verde", "brisa"])) return suggestion("Portagens", 90, "Portagens");
+  if (matchesAny(text, ["uber", "bolt", "cp ", "metro", "autocarro", "train", "bus"])) {
+    return suggestion("Transporte", 84, "Transporte");
+  }
+  if (matchesAny(text, ["continente", "pingo doce", "lidl", "auchan", "mercadona", "intermarche"])) {
+    return suggestion("Alimentação", 92, "Alimentação");
+  }
+  if (matchesAny(text, ["amazon", "worten", "fnac", "pcdiga", "radio popular"])) {
+    return suggestion("Equipamento", 78, "Loja de equipamento");
+  }
+  if (matchesAny(text, ["ginásio", "ginasio", "fitness", "holmes place", "solinca"])) {
+    return suggestion("Ginásio", 88, "Ginásio");
+  }
+  if (matchesAny(text, ["farmacia", "farmácia", "hospital", "clinica", "clínica", "barbearia"])) {
+    return suggestion("Saúde / cuidados pessoais", 86, "Cuidados pessoais");
+  }
+  if (matchesAny(text, ["meta", "facebook", "instagram ads", "google ads", "tiktok ads"])) {
+    return suggestion("Marketing", 86, "Marketing");
   }
 
-  if (!Number.isFinite(amount) && paidOutMatch.value) {
-    amount = -Math.abs(parseMoney(paidOutMatch.value));
-  }
-
-  if (amountMatch.key.includes("paid out") || amountMatch.key.includes("money out")) {
-    amount = -Math.abs(amount);
-  }
-  if (!Number.isFinite(amount) || amount === 0) return null;
-
-  const state = normalizeValue(pick(row, ["state", "estado", "status"]));
-  if (state && !["completed", "complete", "concluido", "concluida"].includes(state)) {
-    return null;
-  }
-
-  const dateRaw = pick(row, [
-    "completed date",
-    "data de conclusao",
-    "data de conclusão",
-    "started date",
-    "data de inicio",
-    "data de início",
-    "date",
-    "data",
-    "created at"
-  ]);
-  const date = parseDate(dateRaw);
-  if (!date) return null;
-
-  const description = pick(row, ["description", "descricao", "descrição", "merchant", "name", "counterparty"]) || "Despesa Revolut";
-  const rawCategory = pick(row, ["category", "categoria", "expense category", "merchant category", "tipo"]);
-  const normalizedDescription = normalizeValue(description);
-  const normalizedCategory = normalizeValue(rawCategory);
-  const isIncome = amount > 0;
-  const ignoredReason = getIgnoredReason(normalizedDescription, normalizedCategory, isIncome);
-  const type: CategoryType = isIncome ? "income" : "expense";
-
-  return {
-    id: [
-      date,
-      amount.toFixed(2),
-      description,
-      rawCategory
-    ].join("|"),
-    selected: !ignoredReason,
-    type,
-    amount: Math.abs(amount),
-    category: rawCategory || (type === "income" ? "Outros" : "Revolut"),
-    description,
-    date,
-    account_name: "Revolut",
-    ignoredReason
-  };
+  return suggestion("Outros", 68, "Despesa detetada");
 }
 
-function getIgnoredReason(description: string, category: string, isIncome: boolean) {
-  if (isOwnAccountTransfer(description)) {
-    return "transferência entre contas tuas";
-  }
-
-  if (isOwnTopUp(description, category)) {
-    return "carregamento/top-up teu";
-  }
-
-  if (isIncome && isRefund(description, category)) {
-    return "reembolso";
-  }
-
-  return "";
-}
-
-function isOwnAccountTransfer(description: string) {
-  const hasOwnName =
-    description.includes("goncalo grilo") ||
-    description.includes("goncalo galvao grilo") ||
-    description.includes("goncalo galvao de sousa grilo");
-
-  return (
-    hasOwnName &&
-    (description.startsWith("to ") ||
-      description.startsWith("from ") ||
-      description.includes("trf p/") ||
-      description.includes("trf. p/") ||
-      description.includes("trf p/o") ||
-      description.includes("trf. p/o") ||
-      description.includes("transferencia para") ||
-      description.includes("transferencia de"))
-  );
-}
-
-function isOwnTopUp(description: string, category: string) {
-  const text = `${description} ${category}`;
-  return (
-    text.includes("apple pay") ||
-    text.includes("top-up") ||
-    text.includes("top up") ||
-    text.includes("card top-up") ||
-    text.includes("card top up") ||
-    text.includes("carregamento com apple pay") ||
-    text.includes("carregamento com open banking")
-  );
-}
-
-function isRefund(description: string, category: string) {
-  const text = `${description} ${category}`;
-  return (
-    text.includes("refund") ||
-    text.includes("refunded") ||
-    text.includes("reembolso") ||
-    text.startsWith("cred") ||
-    text.includes("cashback") ||
-    text.includes("chargeback") ||
-    text.includes("reversal") ||
-    text.includes("revertida") ||
-    text.includes("devolucao")
-  );
+function suggestion(category: string, confidence: number, reason: string) {
+  return { category, confidence, reason };
 }
 
 function parseCsv(text: string) {
   const delimiter = detectDelimiter(text);
   const rows: string[][] = [];
+  let current = "";
   let row: string[] = [];
-  let cell = "";
   let quoted = false;
 
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    const next = text[i + 1];
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
 
     if (char === '"' && quoted && next === '"') {
-      cell += '"';
-      i += 1;
-    } else if (char === '"') {
-      quoted = !quoted;
-    } else if (char === delimiter && !quoted) {
-      row.push(cell);
-      cell = "";
-    } else if ((char === "\n" || char === "\r") && !quoted) {
-      if (char === "\r" && next === "\n") i += 1;
-      row.push(cell);
-      if (row.some((value) => value.trim())) rows.push(row);
-      row = [];
-      cell = "";
-    } else {
-      cell += char;
+      current += '"';
+      index += 1;
+      continue;
     }
+
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+
+    if (char === delimiter && !quoted) {
+      row.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(current.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      current = "";
+      continue;
+    }
+
+    current += char;
   }
 
-  row.push(cell);
-  if (row.some((value) => value.trim())) rows.push(row);
-  return rows;
+  row.push(current.trim());
+  if (row.some(Boolean)) rows.push(row);
+
+  const headerIndex = rows.findIndex((candidate) => candidate.filter(Boolean).length >= 2);
+  if (headerIndex < 0) return [];
+
+  const headers = rows[headerIndex].map((header, index) => header || `Coluna ${index + 1}`);
+  return rows.slice(headerIndex + 1).map((values) =>
+    headers.reduce<Record<string, string>>((record, header, index) => {
+      record[header] = values[index] || "";
+      return record;
+    }, {})
+  );
 }
 
 function detectDelimiter(text: string) {
-  const firstLine = text.split(/\r?\n/).find((line) => line.trim()) || "";
-  const commaCount = (firstLine.match(/,/g) || []).length;
-  const semicolonCount = (firstLine.match(/;/g) || []).length;
-  return semicolonCount > commaCount ? ";" : ",";
+  const firstLines = text.split(/\r?\n/).slice(0, 5).join("\n");
+  const candidates = [",", ";", "\t"];
+  return candidates
+    .map((candidate) => ({
+      candidate,
+      count: (firstLines.match(new RegExp(candidate === "\t" ? "\\t" : `\\${candidate}`, "g")) || []).length
+    }))
+    .sort((a, b) => b.count - a.count)[0]?.candidate || ",";
 }
 
-function recordToObject(headers: string[], record: string[]) {
-  return headers.reduce<Record<string, string>>((object, header, index) => {
-    object[header] = (record[index] || "").trim();
-    return object;
-  }, {});
-}
+function parseSignedAmount(record: Record<string, string>, mapping: ColumnMapping) {
+  if (mapping.amount) return parseMoney(readField(record, mapping.amount));
 
-function normalizeHeader(value: string) {
-  return value
-    .replace(/^\uFEFF/, "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
+  const debit = mapping.debit ? parseMoney(readField(record, mapping.debit)) : 0;
+  const credit = mapping.credit ? parseMoney(readField(record, mapping.credit)) : 0;
 
-function normalizeValue(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
+  if (credit && !debit) return Math.abs(credit);
+  if (debit && !credit) return -Math.abs(debit);
+  if (credit || debit) return Math.abs(credit) - Math.abs(debit);
 
-function cleanWhitespace(value: string) {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function pick(row: Record<string, string>, keys: string[]) {
-  return pickMatch(row, keys).value;
-}
-
-function pickMatch(row: Record<string, string>, keys: string[]) {
-  for (const key of keys) {
-    const value = row[key];
-    if (value) return { key, value: value.trim() };
-  }
-
-  for (const key of keys) {
-    const foundKey = Object.keys(row).find((rowKey) => rowKey.includes(key));
-    if (foundKey && row[foundKey]) return { key: foundKey, value: row[foundKey].trim() };
-  }
-
-  return { key: "", value: "" };
+  return Number.NaN;
 }
 
 function parseMoney(value: string) {
-  const cleaned = value.replace(/[^\d,.-]/g, "");
-  const lastComma = cleaned.lastIndexOf(",");
-  const lastDot = cleaned.lastIndexOf(".");
+  const raw = String(value || "").replace(/\s/g, "").replace(/[^\d,.-]/g, "");
+  if (!raw) return Number.NaN;
 
-  if (lastComma > -1 && lastDot > -1) {
-    const decimalSeparator = lastComma > lastDot ? "," : ".";
-    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
-    return Number(cleaned.replaceAll(thousandsSeparator, "").replace(decimalSeparator, "."));
+  const negative = raw.includes("-");
+  const unsigned = raw.replace(/-/g, "");
+  const lastComma = unsigned.lastIndexOf(",");
+  const lastDot = unsigned.lastIndexOf(".");
+  const decimalSeparator = lastComma > lastDot ? "," : lastDot > -1 ? "." : "";
+  let normalized = unsigned;
+
+  if (decimalSeparator === ",") {
+    normalized = unsigned.replace(/\./g, "").replace(",", ".");
+  } else if (decimalSeparator === ".") {
+    normalized = unsigned.replace(/,/g, "");
   }
 
-  if (lastComma > -1) {
-    return Number(cleaned.replaceAll(".", "").replace(",", "."));
-  }
-
-  if (lastDot > -1 && cleaned.length - lastDot - 1 === 2) {
-    return Number(cleaned.replaceAll(",", ""));
-  }
-
-  return Number(cleaned.replaceAll(",", ""));
-}
-
-function roundMoney(value: number) {
-  return Math.round(value * 100) / 100;
+  const valueNumber = Number(normalized);
+  return negative ? -valueNumber : valueNumber;
 }
 
 function parseDate(value: string) {
-  if (!value) return "";
-  const trimmed = value.trim();
-  if (/^\d+(\.\d+)?$/.test(trimmed)) {
-    const serial = Number(trimmed);
-    if (serial > 20000 && serial < 80000) {
-      const excelEpoch = Date.UTC(1899, 11, 30);
-      return formatLocalDate(new Date(excelEpoch + serial * 86400000));
-    }
+  const clean = String(value || "").trim();
+  if (!clean) return "";
+
+  const serial = Number(clean);
+  if (Number.isFinite(serial) && serial > 25000 && serial < 80000) {
+    const date = new Date(Math.round((serial - 25569) * 86400 * 1000));
+    return formatDate(date);
   }
 
-  const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const iso = clean.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
+  if (iso) return [iso[1], iso[2].padStart(2, "0"), iso[3].padStart(2, "0")].join("-");
 
-  const european = trimmed.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/);
-  if (european) {
-    const year = european[3].length === 2 ? `20${european[3]}` : european[3];
-    return `${year}-${european[2].padStart(2, "0")}-${european[1].padStart(2, "0")}`;
+  const pt = clean.match(/\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b/);
+  if (pt) {
+    const year = pt[3].length === 2 ? `20${pt[3]}` : pt[3];
+    return [year, pt[2].padStart(2, "0"), pt[1].padStart(2, "0")].join("-");
   }
 
-  const parsed = new Date(trimmed);
-  return Number.isNaN(parsed.getTime()) ? "" : formatLocalDate(parsed);
+  const parsed = new Date(clean);
+  return Number.isNaN(parsed.getTime()) ? "" : formatDate(parsed);
 }
 
-function formatLocalDate(date: Date) {
+function formatDate(date: Date) {
   return [
     date.getFullYear(),
     String(date.getMonth() + 1).padStart(2, "0"),
@@ -909,128 +963,75 @@ function formatLocalDate(date: Date) {
   ].join("-");
 }
 
-async function parseXlsx(file: File) {
-  const entries = await readZipEntries(await file.arrayBuffer());
-  const sharedStrings = parseSharedStrings(entries.get("xl/sharedStrings.xml") || "");
-  const sheetPath = getFirstSheetPath(entries) || "xl/worksheets/sheet1.xml";
-  const sheetXml = entries.get(sheetPath);
-
-  if (!sheetXml) {
-    throw new Error("Não consegui encontrar a primeira folha do Excel.");
-  }
-
-  return parseSheet(sheetXml, sharedStrings);
+function readField(record: Record<string, string>, key: string) {
+  return key ? record[key] || "" : "";
 }
 
-async function readZipEntries(buffer: ArrayBuffer) {
-  const view = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
-  const decoder = new TextDecoder();
-  let eocdOffset = -1;
-
-  for (let offset = bytes.length - 22; offset >= 0; offset -= 1) {
-    if (view.getUint32(offset, true) === 0x06054b50) {
-      eocdOffset = offset;
-      break;
-    }
-  }
-
-  if (eocdOffset < 0) throw new Error("Este ficheiro Excel não parece ser um .xlsx válido.");
-
-  const centralDirectoryOffset = view.getUint32(eocdOffset + 16, true);
-  const entryCount = view.getUint16(eocdOffset + 10, true);
-  const entries = new Map<string, string>();
-  let pointer = centralDirectoryOffset;
-
-  for (let i = 0; i < entryCount; i += 1) {
-    if (view.getUint32(pointer, true) !== 0x02014b50) break;
-
-    const method = view.getUint16(pointer + 10, true);
-    const compressedSize = view.getUint32(pointer + 20, true);
-    const fileNameLength = view.getUint16(pointer + 28, true);
-    const extraLength = view.getUint16(pointer + 30, true);
-    const commentLength = view.getUint16(pointer + 32, true);
-    const localHeaderOffset = view.getUint32(pointer + 42, true);
-    const name = decoder.decode(bytes.slice(pointer + 46, pointer + 46 + fileNameLength));
-
-    const localNameLength = view.getUint16(localHeaderOffset + 26, true);
-    const localExtraLength = view.getUint16(localHeaderOffset + 28, true);
-    const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
-    const compressed = bytes.slice(dataStart, dataStart + compressedSize);
-
-    if (name.endsWith(".xml") || name.endsWith(".rels")) {
-      entries.set(name, await decodeZipEntry(compressed, method));
-    }
-
-    pointer += 46 + fileNameLength + extraLength + commentLength;
-  }
-
-  return entries;
+function cleanDescription(value: string) {
+  return String(value || "").replace(/\s+/g, " ").trim() || "Movimento importado";
 }
 
-async function decodeZipEntry(bytes: Uint8Array, method: number) {
-  if (method === 0) return new TextDecoder().decode(bytes);
-  if (method !== 8) throw new Error("O Excel usa uma compressão não suportada.");
-
-  const arrayBuffer = bytes.slice().buffer as ArrayBuffer;
-  const stream = new Blob([arrayBuffer]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-  return new TextDecoder().decode(await new Response(stream).arrayBuffer());
+function normalizeValue(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function parseSharedStrings(xml: string) {
-  if (!xml) return [];
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  return Array.from(doc.getElementsByTagName("si")).map((item) => item.textContent || "");
+function matchesAny(text: string, keywords: string[]) {
+  return keywords.some((keyword) => text.includes(normalizeValue(keyword)));
 }
 
-function getFirstSheetPath(entries: Map<string, string>) {
-  const workbook = entries.get("xl/workbook.xml");
-  const rels = entries.get("xl/_rels/workbook.xml.rels");
-  if (!workbook || !rels) return "";
-
-  const workbookDoc = new DOMParser().parseFromString(workbook, "application/xml");
-  const firstSheet = workbookDoc.getElementsByTagName("sheet")[0];
-  const relId = firstSheet?.getAttribute("r:id");
-  if (!relId) return "";
-
-  const relsDoc = new DOMParser().parseFromString(rels, "application/xml");
-  const relationship = Array.from(relsDoc.getElementsByTagName("Relationship")).find(
-    (rel) => rel.getAttribute("Id") === relId
+function hasTransferSignal(a: string, b: string, accountA: string, accountB: string) {
+  const text = normalizeValue(`${a} ${b}`);
+  const accounts = normalizeValue(`${accountA} ${accountB}`);
+  return (
+    matchesAny(text, [
+      "transfer",
+      "transferencia",
+      "revolut",
+      "millennium",
+      "mb way",
+      "sepa",
+      "top up",
+      "top-up",
+      "card top-up",
+      "carregamento"
+    ]) || matchesAny(text, accounts.split(" ").filter((word) => word.length > 3))
   );
-  const target = relationship?.getAttribute("Target") || "";
-  if (!target) return "";
-
-  return target.startsWith("/") ? target.slice(1) : `xl/${target.replace("../", "")}`;
 }
 
-function parseSheet(xml: string, sharedStrings: string[]) {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  return Array.from(doc.getElementsByTagName("row")).map((row) => {
-    const values: string[] = [];
-
-    Array.from(row.getElementsByTagName("c")).forEach((cell) => {
-      const ref = cell.getAttribute("r") || "";
-      const index = columnIndex(ref.replace(/[0-9]/g, ""));
-      const type = cell.getAttribute("t");
-      const rawValue = cell.getElementsByTagName("v")[0]?.textContent || "";
-      const inlineValue = cell.getElementsByTagName("is")[0]?.textContent || "";
-
-      if (type === "s") {
-        values[index] = sharedStrings[Number(rawValue)] || "";
-      } else if (type === "inlineStr") {
-        values[index] = inlineValue;
-      } else {
-        values[index] = rawValue;
-      }
-    });
-
-    return values.map((value) => value || "");
-  });
+function amountsMatch(a: number, b: number) {
+  const difference = Math.abs(a - b);
+  return difference <= Math.max(0.5, Math.max(a, b) * 0.01);
 }
 
-function columnIndex(letters: string) {
-  return letters
-    .toUpperCase()
-    .split("")
-    .reduce((sum, letter) => sum * 26 + letter.charCodeAt(0) - 64, 0) - 1;
+function daysBetween(a: string, b: string) {
+  const first = new Date(`${a}T00:00:00`).getTime();
+  const second = new Date(`${b}T00:00:00`).getTime();
+  return Math.round((first - second) / 86400000);
+}
+
+function descriptionSimilarity(a: string, b: string) {
+  const first = tokenSet(a);
+  const second = tokenSet(b);
+  if (!first.size || !second.size) return 0;
+
+  const overlap = Array.from(first).filter((token) => second.has(token)).length;
+  const union = new Set([...Array.from(first), ...Array.from(second)]).size;
+  return overlap / union;
+}
+
+function tokenSet(value: string) {
+  return new Set(
+    normalizeValue(value)
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length > 2)
+  );
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
 }

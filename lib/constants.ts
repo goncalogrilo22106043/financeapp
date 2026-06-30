@@ -10,6 +10,7 @@ export const incomeCategories = [
 
 export const expenseCategories = [
   "Alimentação",
+  "Transporte",
   "Combustível",
   "Portagens",
   "Subscrições",

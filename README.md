@@ -20,7 +20,7 @@ Transferências não contam para receitas, despesas, lucro nem taxa de poupança
 - Página Movimentos com filtros por mês, conta, tipo, categoria e pesquisa.
 - Categorias editáveis para receitas e despesas.
 - Estatísticas que ignoram transferências.
-- Importador Excel/CSV da Revolut e PDF do Millennium com pré-visualização.
+- Importador CSV inteligente para Revolut e Millennium com pré-visualização, duplicados e transferências internas.
 - Dados guardados na Supabase, partilhados entre PC e telemóvel.
 - PWA-ready para instalar no telemóvel.
 
@@ -71,24 +71,25 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 ## Importar movimentos
 
-1. Na Revolut, exporta o extrato em Excel (`.xlsx`) ou CSV.
-2. No Millennium, exporta o extrato em PDF.
+1. Exporta o extrato do banco em CSV.
+2. Na app, escolhe a conta certa: `Revolut`, `Millennium` ou outra.
 3. Na app, abre `Movimentos`.
 4. Clica em `Importar`.
-5. Confirma a pré-visualização.
-6. Ajusta Receita/Despesa e categoria, se necessário.
-7. Clica em `Importar selecionadas`.
+5. Carrega o CSV.
+6. Se o formato for desconhecido, associa manualmente as colunas de data, descrição e valor.
+7. Confirma a pré-visualização, ajusta Receita/Despesa/Transferência e categoria.
+8. Clica em `Guardar importação`.
 
-Importações da Revolut entram na conta `Revolut`. PDFs do Millennium entram na conta `Millennium`.
+A importação nunca guarda movimentos sem revisão final.
 
 Regras automáticas:
 
 - Compras reais entram como despesas.
 - Créditos reais entram como receitas.
-- Compras `Revolut 5625 Dublin IE` no Millennium entram como transferência `Millennium -> Revolut`.
-- `TRF. P/O Gonçalo Grilo` no Millennium entra como transferência `Revolut -> Millennium`.
+- Movimentos parecidos entre duas contas, em datas próximas e com valores iguais, são sugeridos como `Transferência`.
+- Top-ups, MB WAY, SEPA, Revolut, Millennium e descrições de transferência ajudam a ligar os movimentos.
 - Transferências puras entre contas ficam fora de receitas, despesas, lucro e estatísticas financeiras.
-- Duplicados simples são ignorados por tipo, data, valor, descrição, categoria e conta.
+- Possíveis duplicados aparecem marcados e ficam ignorados, exceto se escolheres `Importar mesmo assim`.
 
 ## Nota sobre acesso
 

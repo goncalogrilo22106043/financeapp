@@ -56,6 +56,7 @@ type PreviewRow = {
   transferGroupId?: string;
   fromAccountName?: string;
   toAccountName?: string;
+  transferDecision?: "suggested" | "confirmed" | "ignored";
 };
 
 type ImportResult = {
@@ -165,6 +166,11 @@ export default function ImportPage() {
     () => selectedTransfers.reduce((sum, row) => sum + row.amount, 0),
     [selectedTransfers]
   );
+  const realProfit = incomeTotal - expenseTotal;
+  const transferSuggestions = useMemo(
+    () => rows.filter((row) => row.type === "transfer" && row.selected && row.transferDecision === "suggested"),
+    [rows]
+  );
   const needsMapping = files.some((file) => file.needsMapping);
   const activeStep = rows.length ? (selectedTransfers.length ? 2 : 1) : 0;
 
@@ -250,6 +256,52 @@ export default function ImportPage() {
         ...row,
         selected: row.duplicate && !row.importAnyway ? false : value
       }))
+    );
+  }
+
+  function confirmAsTransfer(row: PreviewRow) {
+    updateRow(row.id, {
+      type: "transfer",
+      category: "Transferência",
+      selected: true,
+      reason: "Transferência confirmada",
+      transferDecision: "confirmed"
+    });
+  }
+
+  function keepAsNormalMovement(row: PreviewRow) {
+    setRows((current) =>
+      current.map((item) => {
+        if (item.id !== row.id && item.id !== row.linkedTransferId) return item;
+
+        const type = item.signedAmount >= 0 ? "income" : "expense";
+        const suggestion = suggestCategory(item.description, type);
+
+        return {
+          ...item,
+          type,
+          suggestedType: type,
+          category: suggestion.category,
+          confidence: Math.min(item.confidence, 75),
+          reason: suggestion.reason,
+          selected: item.duplicate && !item.importAnyway ? false : true,
+          linkedTransferId: undefined,
+          transferGroupId: undefined,
+          fromAccountName: undefined,
+          toAccountName: undefined,
+          transferDecision: undefined
+        };
+      })
+    );
+  }
+
+  function ignoreTransfer(row: PreviewRow) {
+    setRows((current) =>
+      current.map((item) =>
+        item.id === row.id || item.id === row.linkedTransferId
+          ? { ...item, selected: false, reason: "Ignorada pelo utilizador", transferDecision: "ignored" }
+          : item
+      )
     );
   }
 
@@ -441,12 +493,22 @@ export default function ImportPage() {
               </div>
             </div>
 
-            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
               <Metric label="Selecionadas" value={String(selectedRows.length)} />
-              <Metric label="Receitas" tone="income" value={euros(incomeTotal)} />
-              <Metric label="Despesas" tone="expense" value={euros(expenseTotal)} />
-              <Metric label="Transferências" tone="transfer" value={euros(transferTotal)} />
+              <Metric label="Receitas reais" tone="income" value={euros(incomeTotal)} />
+              <Metric label="Despesas reais" tone="expense" value={euros(expenseTotal)} />
+              <Metric label="Lucro real" tone={realProfit >= 0 ? "income" : "expense"} value={euros(realProfit)} />
+              <Metric label="Transferências fora das estatísticas" tone="transfer" value={euros(transferTotal)} />
             </div>
+
+            {transferSuggestions.length ? (
+              <TransferReview
+                rows={transferSuggestions}
+                onConfirm={confirmAsTransfer}
+                onIgnore={ignoreTransfer}
+                onKeepNormal={keepAsNormalMovement}
+              />
+            ) : null}
 
             {rows.length ? (
               <div className="mb-3 flex flex-wrap gap-2">
@@ -462,7 +524,7 @@ export default function ImportPage() {
             <div className="max-h-[40rem] min-w-0 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
               {!rows.length ? (
                 <div className="rounded-3xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                  {parsing ? "A ler o ficheiro..." : "Carrega um CSV para veres os movimentos antes de guardar."}
+                  {parsing ? "A ler o ficheiro..." : "Carrega um CSV ou PDF para veres os movimentos antes de guardar."}
                 </div>
               ) : null}
 
@@ -519,6 +581,11 @@ function MappingSelect({
 function validateRowsBeforeImport(rows: PreviewRow[], accounts: Account[]) {
   if (!rows.length) return "Seleciona pelo menos um movimento para guardar.";
 
+  const pendingTransfer = rows.find((row) => row.type === "transfer" && row.transferDecision === "suggested");
+  if (pendingTransfer) {
+    return `Confirma primeiro a possível transferência "${pendingTransfer.description}" ou escolhe manter como receita/despesa.`;
+  }
+
   const accountNames = new Set(accounts.map((account) => normalizeValue(account.name)));
   const invalidTransfer = rows.find((row) => {
     if (row.type !== "transfer") return false;
@@ -567,6 +634,62 @@ function Metric({
     >
       <p className="text-xs opacity-75">{label}</p>
       <strong className="text-xl">{value}</strong>
+    </div>
+  );
+}
+
+function TransferReview({
+  rows,
+  onConfirm,
+  onIgnore,
+  onKeepNormal
+}: {
+  rows: PreviewRow[];
+  onConfirm: (row: PreviewRow) => void;
+  onIgnore: (row: PreviewRow) => void;
+  onKeepNormal: (row: PreviewRow) => void;
+}) {
+  return (
+    <div className="mb-4 rounded-3xl border border-sky-500/25 bg-sky-500/5 p-4">
+      <div className="mb-3 flex items-start gap-3">
+        <Link2 className="mt-1 h-5 w-5 text-sky-700 dark:text-sky-300" />
+        <div>
+          <h3 className="font-bold">Transferências possíveis</h3>
+          <p className="text-sm text-muted-foreground">
+            Confirma o que é apenas dinheiro a circular entre as tuas contas. Estas linhas ficam fora das receitas e despesas.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {rows.map((row) => (
+          <div className="rounded-2xl border border-border bg-card p-3" key={row.id}>
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="break-words font-semibold">{row.description}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {row.date} · {row.fromAccountName || "Origem"} → {row.toAccountName || "Destino"} · confiança {row.confidence}%
+                </p>
+              </div>
+              <strong className="shrink-0 whitespace-nowrap text-sky-700 dark:text-sky-300">
+                {euros(row.amount)}
+              </strong>
+            </div>
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <Button size="sm" variant="secondary" onClick={() => onConfirm(row)}>
+                Confirmar como transferência
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => onKeepNormal(row)}>
+                Manter como receita/despesa
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => onIgnore(row)}>
+                Ignorar
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -783,7 +906,8 @@ function rowsFromFile(file: ImportFile): PreviewRow[] {
       confidence: transferSuggestion?.confidence || suggestion.confidence,
       reason: transferSuggestion?.reason || suggestion.reason,
       fromAccountName: transferSuggestion?.fromAccountName,
-      toAccountName: transferSuggestion?.toAccountName
+      toAccountName: transferSuggestion?.toAccountName,
+      transferDecision: transferSuggestion ? "suggested" : undefined
     });
   });
 
@@ -1177,6 +1301,7 @@ function detectInternalTransfers(rows: PreviewRow[]) {
     negative.fromAccountName = negative.accountName;
     negative.toAccountName = positive.accountName;
     negative.selected = !negative.duplicate;
+    negative.transferDecision = "suggested";
 
     positive.type = "transfer";
     positive.suggestedType = "transfer";
@@ -1188,6 +1313,7 @@ function detectInternalTransfers(rows: PreviewRow[]) {
     positive.fromAccountName = negative.accountName;
     positive.toAccountName = positive.accountName;
     positive.selected = false;
+    positive.transferDecision = "suggested";
 
     used.add(negative.id);
     used.add(positive.id);

@@ -607,7 +607,7 @@ export default function ImportPage() {
               </div>
             </div>
 
-            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-6">
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))]">
               <Metric label="Selecionadas" value={String(selectedRows.length)} />
               <Metric label="Receitas reais" tone="income" value={euros(incomeTotal)} />
               <Metric label="Despesas reais" tone="expense" value={euros(expenseTotal)} />
@@ -771,15 +771,17 @@ function Metric({
   return (
     <div
       className={cn(
-        "rounded-2xl bg-muted p-4",
+        "min-w-0 rounded-2xl bg-muted p-4",
         tone === "income" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
         tone === "expense" && "bg-rose-500/10 text-rose-700 dark:text-rose-300",
         tone === "transfer" && "bg-sky-500/10 text-sky-700 dark:text-sky-300",
         tone === "neutral" && "bg-violet-500/10 text-violet-700 dark:text-violet-300"
       )}
     >
-      <p className="text-xs opacity-75">{label}</p>
-      <strong className="text-xl">{value}</strong>
+      <p className="max-w-full break-words text-xs leading-tight opacity-75">{label}</p>
+      <strong className="mt-1 block max-w-full break-words text-[clamp(1rem,2vw,1.25rem)] leading-tight">
+        {value}
+      </strong>
     </div>
   );
 }

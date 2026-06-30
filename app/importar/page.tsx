@@ -221,8 +221,8 @@ export default function ImportPage() {
     [rows]
   );
   const visibleRows = useMemo(
-    () => (reviewRows.length || !learnedRows.length ? reviewRows.length ? reviewRows : rows : []),
-    [learnedRows.length, reviewRows, rows]
+    () => (reviewRows.length ? reviewRows : rows),
+    [reviewRows, rows]
   );
   const needsMapping = files.some((file) => file.needsMapping);
   const activeStep = rows.length ? (selectedTransfers.length ? 2 : 1) : 0;
@@ -629,7 +629,7 @@ export default function ImportPage() {
               <div className="mb-4 rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-800 dark:text-emerald-200">
                 <p className="font-semibold">{learnedRows.length} movimentos classificados por regras aprendidas.</p>
                 <p className="mt-1 opacity-80">
-                  Só aparecem abaixo os movimentos que precisam de revisão, possíveis duplicados ou transferências por confirmar.
+                  Podes rever, desselecionar ou corrigir qualquer movimento antes de guardar.
                 </p>
               </div>
             ) : null}
@@ -667,12 +667,6 @@ export default function ImportPage() {
               {!rows.length ? (
                 <div className="rounded-3xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                   {parsing ? "A ler o ficheiro..." : "Carrega um CSV ou PDF para veres os movimentos antes de guardar."}
-                </div>
-              ) : null}
-
-              {rows.length && !visibleRows.length ? (
-                <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-8 text-center text-sm text-emerald-800 dark:text-emerald-200">
-                  Todos os movimentos foram classificados por regras aprendidas. Confirma os totais e guarda a importação.
                 </div>
               ) : null}
 

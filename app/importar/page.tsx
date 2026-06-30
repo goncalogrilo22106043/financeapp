@@ -1638,6 +1638,10 @@ function isReliableInternalTransferDescription(description: string) {
     "goncalo grilo",
     "gonçalo grilo",
     "g grilo",
+    "to goncalo",
+    "to gonçalo",
+    "para goncalo",
+    "para gonçalo",
     "revolut",
     "millennium",
     "bcp",
@@ -1660,7 +1664,11 @@ function suggestStandaloneTransfer(accountName: string, description: string, sig
   const mentionsOwnName = matchesAny(text, [
     "goncalo grilo",
     "gonçalo grilo",
-    "g grilo"
+    "g grilo",
+    "to goncalo",
+    "to gonçalo",
+    "para goncalo",
+    "para gonçalo"
   ]);
   const isTopUp = matchesAny(text, [
     "top up",
@@ -1702,7 +1710,7 @@ function suggestStandaloneTransfer(accountName: string, description: string, sig
       return transferSuggestion("Millennium para Revolut", "Millennium", "Revolut", 92);
     }
 
-    if (signedAmount < 0 && mentionsOwnName && isTransferText) {
+    if (signedAmount < 0 && mentionsOwnName) {
       return transferSuggestion("Revolut para Millennium", "Revolut", "Millennium", 90);
     }
 

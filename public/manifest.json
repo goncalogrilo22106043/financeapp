@@ -1,7 +1,7 @@
 {
-  "name": "FinanceFlow",
-  "short_name": "FinanceFlow",
-  "description": "App simples para registar receitas, despesas e objetivos financeiros.",
+  "name": "Finanças",
+  "short_name": "Finanças",
+  "description": "App simples para controlar contas, receitas, despesas e transferências.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

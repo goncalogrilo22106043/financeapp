@@ -19,9 +19,9 @@ import { AppShell } from "@/components/app-shell";
 import { MonthPicker } from "@/components/finance/month-picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { chartPalette } from "@/lib/constants";
-import { summarize, totalsByCategory } from "@/lib/finance";
-import { fetchAllTransactions, fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
-import type { Category, Transaction } from "@/lib/types";
+import { summarize, totalsByAccount, totalsByCategory } from "@/lib/finance";
+import { fetchAccounts, fetchAllTransactions, fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
+import type { Account, Category, Transaction } from "@/lib/types";
 import { addMonths, euros, monthKey, monthLabel } from "@/lib/utils";
 import { TransactionSheet } from "@/components/finance/transaction-sheet";
 
@@ -34,20 +34,23 @@ function Stats() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [error, setError] = useState("");
 
   async function load() {
     setError("");
     try {
-      const [nextCategories, monthTransactions, everyTransaction] = await Promise.all([
+      const [nextCategories, monthTransactions, everyTransaction, nextAccounts] = await Promise.all([
         fetchCategories(),
         fetchTransactions(month),
-        fetchAllTransactions()
+        fetchAllTransactions(),
+        fetchAccounts()
       ]);
       setCategories(nextCategories);
       setTransactions(monthTransactions);
       setAllTransactions(everyTransaction);
+      setAccounts(nextAccounts);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não consegui carregar as estatísticas.");
     }
@@ -59,7 +62,8 @@ function Stats() {
 
   const expenses = useMemo(() => totalsByCategory(transactions, "expense"), [transactions]);
   const income = useMemo(() => totalsByCategory(transactions, "income"), [transactions]);
-  const summary = useMemo(() => summarize(transactions), [transactions]);
+  const accountExpenses = useMemo(() => totalsByAccount(transactions, "expense"), [transactions]);
+  const summary = useMemo(() => summarize(transactions, accounts), [transactions, accounts]);
   const balanceEvolution = useMemo(() => {
     return Array.from({ length: 6 }, (_, index) => {
       const key = addMonths(month, index - 5);
@@ -122,6 +126,18 @@ function Stats() {
           </ResponsiveContainer>
         </ChartCard>
 
+        <ChartCard title="Despesas por conta">
+          <ResponsiveContainer height={260} width="100%">
+            <BarChart data={accountExpenses}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" />
+              <YAxis hide />
+              <Tooltip formatter={(value) => euros(Number(value))} />
+              <Bar dataKey="value" fill="#2563eb" radius={[12, 12, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
         <ChartCard title="Receitas vs despesas">
           <ResponsiveContainer height={260} width="100%">
             <BarChart
@@ -157,6 +173,7 @@ function Stats() {
 
       <TransactionSheet
         categories={categories}
+        accounts={accounts}
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         onSaved={load}

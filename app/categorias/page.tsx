@@ -12,15 +12,16 @@ import { Sheet } from "@/components/ui/sheet";
 import {
   deleteCategory,
   fetchCategories,
+  fetchAccounts,
   saveCategory
 } from "@/lib/supabase/queries";
-import type { Category, TransactionType } from "@/lib/types";
+import type { Account, Category, CategoryType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type CategoryForm = {
   id?: string;
   name: string;
-  type: TransactionType;
+  type: CategoryType;
 };
 
 const emptyForm: CategoryForm = {
@@ -30,6 +31,7 @@ const emptyForm: CategoryForm = {
 
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [categorySheetOpen, setCategorySheetOpen] = useState(false);
   const [transactionSheetOpen, setTransactionSheetOpen] = useState(false);
   const [form, setForm] = useState<CategoryForm>(emptyForm);
@@ -39,7 +41,9 @@ export default function CategoriesPage() {
   async function load() {
     setError("");
     try {
-      setCategories(await fetchCategories());
+      const [nextCategories, nextAccounts] = await Promise.all([fetchCategories(), fetchAccounts()]);
+      setCategories(nextCategories);
+      setAccounts(nextAccounts);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não consegui carregar as categorias.");
     }
@@ -58,7 +62,7 @@ export default function CategoriesPage() {
     [categories]
   );
 
-  function openNew(type: TransactionType) {
+  function openNew(type: CategoryType) {
     setForm({ name: "", type });
     setCategorySheetOpen(true);
   }
@@ -153,7 +157,7 @@ export default function CategoriesPage() {
               onChange={(event) =>
                 setForm((current) => ({
                   ...current,
-                  type: event.target.value as TransactionType
+                  type: event.target.value as CategoryType
                 }))
               }
             >
@@ -170,6 +174,7 @@ export default function CategoriesPage() {
 
       <TransactionSheet
         categories={categories}
+        accounts={accounts}
         open={transactionSheetOpen}
         onClose={() => setTransactionSheetOpen(false)}
         onSaved={load}
@@ -188,8 +193,8 @@ function CategorySection({
 }: {
   categories: Category[];
   title: string;
-  type: TransactionType;
-  onAdd: (type: TransactionType) => void;
+  type: CategoryType;
+  onAdd: (type: CategoryType) => void;
   onEdit: (category: Category) => void;
   onRemove: (category: Category) => void;
 }) {

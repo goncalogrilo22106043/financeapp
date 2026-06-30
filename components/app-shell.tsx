@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Home, PiggyBank, Plus, ReceiptText, Tags, Target } from "lucide-react";
+import { BarChart3, Home, PiggyBank, Plus, ReceiptText, Tags, Target, WalletCards } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/", label: "Início", mobileLabel: "Início", icon: Home },
-  { href: "/transacoes", label: "Transações", mobileLabel: "Mov.", icon: ReceiptText },
+  { href: "/transacoes", label: "Movimentos", mobileLabel: "Mov.", icon: ReceiptText },
+  { href: "/contas", label: "Contas", mobileLabel: "Contas", icon: WalletCards },
   { href: "/categorias", label: "Categorias", mobileLabel: "Cat.", icon: Tags },
   { href: "/estatisticas", label: "Estatísticas", mobileLabel: "Stats", icon: BarChart3 },
   { href: "/objetivos", label: "Objetivos", mobileLabel: "Obj.", icon: Target }
@@ -33,7 +34,7 @@ export function AppShell({
               <PiggyBank className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-sm font-bold leading-none">FinanceFlow</p>
+              <p className="text-sm font-bold leading-none">Finanças</p>
               <p className="text-xs text-muted-foreground">Simples e diário</p>
             </div>
           </Link>
@@ -62,7 +63,7 @@ export function AppShell({
       ) : null}
 
       <nav className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/90 px-3 pt-2 backdrop-blur-xl md:hidden">
-        <div className="grid grid-cols-5 gap-1">
+        <div className="grid grid-cols-6 gap-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;

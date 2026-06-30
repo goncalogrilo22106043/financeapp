@@ -7,7 +7,7 @@ import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { importTransactions } from "@/lib/supabase/queries";
-import type { TransactionType } from "@/lib/types";
+import type { CategoryType, TransactionType } from "@/lib/types";
 import { euros } from "@/lib/utils";
 
 type ParsedImportRow = {
@@ -18,7 +18,9 @@ type ParsedImportRow = {
   category: string;
   description: string;
   date: string;
-  payment_method: string;
+  account_name?: string;
+  from_account_name?: string;
+  to_account_name?: string;
   ignoredReason?: string;
 };
 
@@ -70,6 +72,10 @@ export default function ImportPage() {
   );
   const selectedIncome = useMemo(
     () => selectedRows.filter((row) => row.type === "income"),
+    [selectedRows]
+  );
+  const selectedTransfers = useMemo(
+    () => selectedRows.filter((row) => row.type === "transfer"),
     [selectedRows]
   );
   const expenseTotal = useMemo(
@@ -176,8 +182,8 @@ export default function ImportPage() {
               <strong className="text-2xl">{selectedRows.length}</strong>
             </div>
             <div className="rounded-2xl bg-muted p-4">
-              <p className="text-xs text-muted-foreground">Ignoradas</p>
-              <strong className="text-2xl">{rows.filter((row) => row.ignoredReason).length}</strong>
+              <p className="text-xs text-muted-foreground">Transferências</p>
+              <strong className="text-2xl">{selectedTransfers.length}</strong>
             </div>
             <div className="rounded-2xl bg-emerald-500/10 p-4">
               <p className="text-xs text-emerald-700 dark:text-emerald-300">Receitas</p>
@@ -218,13 +224,13 @@ export default function ImportPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-start justify-between gap-3">
                       <p className="min-w-0 break-words font-semibold leading-snug">{row.description}</p>
-                      <strong className={`shrink-0 whitespace-nowrap ${row.type === "income" ? "text-emerald-600" : "text-rose-600"}`}>
-                        {row.type === "income" ? "+" : "-"}
+                      <strong className={`shrink-0 whitespace-nowrap ${row.type === "income" ? "text-emerald-600" : row.type === "expense" ? "text-rose-600" : "text-sky-600"}`}>
+                        {row.type === "income" ? "+" : row.type === "expense" ? "-" : ""}
                         {euros(Math.abs(row.amount))}
                       </strong>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {row.date} · {row.category}
+                      {row.date} · {accountLabel(row)} · {row.type === "transfer" ? "Transferência" : row.category}
                     </p>
                     {row.ignoredReason && !row.selected ? (
                       <p className="mt-2 rounded-xl bg-muted px-3 py-2 text-xs font-medium text-muted-foreground">
@@ -241,6 +247,7 @@ export default function ImportPage() {
                         >
                           <option value="expense">Despesa</option>
                           <option value="income">Receita</option>
+                          <option value="transfer">Transferência</option>
                         </select>
                         <input
                           className="h-10 rounded-xl border border-border bg-background px-3 text-sm"
@@ -262,6 +269,14 @@ export default function ImportPage() {
       </div>
     </AppShell>
   );
+}
+
+function accountLabel(row: ParsedImportRow) {
+  if (row.type === "transfer") {
+    return `${row.from_account_name || "Origem"} -> ${row.to_account_name || "Destino"}`;
+  }
+
+  return row.account_name || "Conta";
 }
 
 async function parseImportFile(file: File): Promise<ParsedImportRow[]> {
@@ -425,9 +440,10 @@ function toMillenniumRow(
   const description = cleanMillenniumDescription(line, dateMatch[1], moneyMatches.map((match) => match.raw));
   const normalizedDescription = normalizeValue(description);
   const isIncome = amount > 0;
-  const type: TransactionType = isIncome ? "income" : "expense";
-  const ignoredReason =
-    normalizedDescription.includes("revolut") ? "carregamento/top-up teu" : getMillenniumIgnoredReason(normalizedDescription, isIncome);
+  const isRevolutTopUp = normalizedDescription.includes("revolut");
+  const isRevolutToMillennium = isIncome && isOwnMillenniumIncomeTransfer(normalizedDescription);
+  const type: TransactionType = isRevolutTopUp || isRevolutToMillennium ? "transfer" : isIncome ? "income" : "expense";
+  const ignoredReason = type === "transfer" ? "" : getIgnoredReason(normalizedDescription, "", isIncome);
 
   return {
     row: {
@@ -435,10 +451,12 @@ function toMillenniumRow(
       selected: !ignoredReason,
       type,
       amount: Math.abs(amount),
-      category: guessMillenniumCategory(description, type),
+      category: type === "transfer" ? "Transferência" : guessMillenniumCategory(description, type as CategoryType),
       description,
       date,
-      payment_method: "Millennium",
+      account_name: type === "transfer" ? undefined : "Millennium",
+      from_account_name: isRevolutToMillennium ? "Revolut" : isRevolutTopUp ? "Millennium" : undefined,
+      to_account_name: isRevolutToMillennium ? "Millennium" : isRevolutTopUp ? "Revolut" : undefined,
       ignoredReason
     },
     balance
@@ -447,8 +465,11 @@ function toMillenniumRow(
 
 function findMoneyMatches(line: string) {
   const matches = Array.from(
-    line.matchAll(/(?<![A-Z0-9])(?:[-+]\s*)?\d{1,3}(?:[ .]\d{3})*[,.]\d{2}\s*(?:[-+]|EUR|€|D|C|CR|DR)?/gi)
-  );
+    line.matchAll(/(?:[-+]\s*)?\d{1,3}(?:[ .]\d{3})*[,.]\d{2}\s*(?:[-+]|EUR|€|D|C|CR|DR)?/gi)
+  ).filter((match) => {
+    const previous = line[(match.index || 0) - 1] || "";
+    return !/[A-Z0-9]/i.test(previous);
+  });
 
   return matches.map((match) => ({
     raw: match[0].trim(),
@@ -496,14 +517,6 @@ function parseSignedMoney(raw: string, line: string) {
   return -amount;
 }
 
-function getMillenniumIgnoredReason(description: string, isIncome: boolean) {
-  if (isIncome && isOwnMillenniumIncomeTransfer(description)) {
-    return "";
-  }
-
-  return getIgnoredReason(description, "", isIncome);
-}
-
 function isOwnMillenniumIncomeTransfer(description: string) {
   const hasOwnName =
     description.includes("goncalo grilo") ||
@@ -548,7 +561,7 @@ function cleanMillenniumDescription(line: string, date: string, moneyValues: str
   return cleanWhitespace(description).replace(/^[-:./\s]+|[-:./\s]+$/g, "") || "Movimento Millennium";
 }
 
-function guessMillenniumCategory(description: string, type: TransactionType) {
+function guessMillenniumCategory(description: string, type: CategoryType) {
   const text = normalizeValue(description);
 
   if (type === "income") {
@@ -667,7 +680,7 @@ function toImportRow(row: Record<string, string>): ParsedImportRow | null {
   const normalizedCategory = normalizeValue(rawCategory);
   const isIncome = amount > 0;
   const ignoredReason = getIgnoredReason(normalizedDescription, normalizedCategory, isIncome);
-  const type: TransactionType = isIncome ? "income" : "expense";
+  const type: CategoryType = isIncome ? "income" : "expense";
 
   return {
     id: [
@@ -682,7 +695,7 @@ function toImportRow(row: Record<string, string>): ParsedImportRow | null {
     category: rawCategory || (type === "income" ? "Outros" : "Revolut"),
     description,
     date,
-    payment_method: "Revolut",
+    account_name: "Revolut",
     ignoredReason
   };
 }

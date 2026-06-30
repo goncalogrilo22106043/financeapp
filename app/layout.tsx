@@ -4,13 +4,13 @@ import { PwaRegister } from "@/components/pwa-register";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "FinanceFlow",
+  title: "Finanças",
   description: "Finanças pessoais simples para uso diário no telemóvel.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "FinanceFlow"
+    title: "Finanças"
   }
 };
 

@@ -5,17 +5,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Sheet } from "@/components/ui/sheet";
-import { paymentMethods } from "@/lib/constants";
 import { saveTransaction } from "@/lib/supabase/queries";
-import type { Category, Transaction, TransactionType } from "@/lib/types";
+import type { Account, Category, Transaction, TransactionType } from "@/lib/types";
 import { cn, dateForInput } from "@/lib/utils";
 
 type FormState = {
   type: TransactionType;
   amount: string;
   category_id: string;
+  account_id: string;
+  from_account_id: string;
+  to_account_id: string;
   description: string;
-  payment_method: string;
   date: string;
 };
 
@@ -23,20 +24,24 @@ const initialForm: FormState = {
   type: "expense",
   amount: "",
   category_id: "",
+  account_id: "",
+  from_account_id: "",
+  to_account_id: "",
   description: "",
-  payment_method: "Cartão",
   date: dateForInput()
 };
 
 export function TransactionSheet({
   open,
   categories,
+  accounts,
   transaction,
   onClose,
   onSaved
 }: {
   open: boolean;
   categories: Category[];
+  accounts: Account[];
   transaction?: Transaction | null;
   onClose: () => void;
   onSaved: () => void;
@@ -49,13 +54,18 @@ export function TransactionSheet({
   );
 
   useEffect(() => {
+    const firstAccount = accounts[0]?.id || "";
+    const secondAccount = accounts[1]?.id || firstAccount;
+
     if (transaction) {
       setForm({
         type: transaction.type,
         amount: String(transaction.amount),
         category_id: transaction.category_id || "",
+        account_id: transaction.account_id || firstAccount,
+        from_account_id: transaction.from_account_id || firstAccount,
+        to_account_id: transaction.to_account_id || secondAccount,
         description: transaction.description || "",
-        payment_method: transaction.payment_method || "Cartão",
         date: transaction.date
       });
       return;
@@ -63,29 +73,38 @@ export function TransactionSheet({
 
     setForm({
       ...initialForm,
+      account_id: firstAccount,
+      from_account_id: firstAccount,
+      to_account_id: secondAccount,
       category_id: categories.find((category) => category.type === initialForm.type)?.id || ""
     });
-  }, [categories, transaction, open]);
+  }, [accounts, categories, transaction, open]);
 
   useEffect(() => {
-    if (!visibleCategories.length) return;
+    if (form.type === "transfer" || !visibleCategories.length) return;
     if (!visibleCategories.some((category) => category.id === form.category_id)) {
       setForm((current) => ({ ...current, category_id: visibleCategories[0].id }));
     }
-  }, [form.category_id, visibleCategories]);
+  }, [form.category_id, form.type, visibleCategories]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!form.category_id) return;
+    if (form.type !== "transfer" && !form.category_id) return;
+    if (form.type !== "transfer" && !form.account_id) return;
+    if (form.type === "transfer" && (!form.from_account_id || !form.to_account_id)) return;
+    if (form.type === "transfer" && form.from_account_id === form.to_account_id) return;
+
     setSaving(true);
     try {
       await saveTransaction({
         id: transaction?.id,
         type: form.type,
         amount: Number(form.amount),
-        category_id: form.category_id,
+        category_id: form.type === "transfer" ? null : form.category_id,
+        account_id: form.type === "transfer" ? null : form.account_id,
+        from_account_id: form.type === "transfer" ? form.from_account_id : null,
+        to_account_id: form.type === "transfer" ? form.to_account_id : null,
         description: form.description,
-        payment_method: form.payment_method,
         date: form.date
       });
       onSaved();
@@ -98,12 +117,12 @@ export function TransactionSheet({
   return (
     <Sheet
       open={open}
-      title={transaction ? "Editar transação" : "Nova transação"}
+      title={transaction ? "Editar movimento" : "Novo movimento"}
       onClose={onClose}
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <div className="grid grid-cols-2 gap-2 rounded-3xl bg-muted p-1">
-          {(["expense", "income"] as TransactionType[]).map((type) => (
+        <div className="grid grid-cols-3 gap-2 rounded-3xl bg-muted p-1">
+          {(["expense", "income", "transfer"] as TransactionType[]).map((type) => (
             <button
               className={cn(
                 "h-12 rounded-[1.35rem] text-sm font-bold transition",
@@ -113,7 +132,7 @@ export function TransactionSheet({
               type="button"
               onClick={() => setForm((current) => ({ ...current, type }))}
             >
-              {type === "income" ? "Receita" : "Despesa"}
+              {type === "income" ? "Receita" : type === "expense" ? "Despesa" : "Transfer."}
             </button>
           ))}
         </div>
@@ -133,63 +152,105 @@ export function TransactionSheet({
           />
         </label>
 
-        <label className="block">
-          <span className="mb-2 block text-sm font-medium text-muted-foreground">Categoria</span>
-          <Select
-            value={form.category_id}
-            onChange={(event) => setForm((current) => ({ ...current, category_id: event.target.value }))}
-            required
-          >
-            {visibleCategories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </Select>
-          {!visibleCategories.length ? (
-            <p className="mt-2 text-sm text-rose-600">
-              Cria primeiro uma categoria para este tipo de transação.
-            </p>
-          ) : null}
-        </label>
+        {form.type === "transfer" ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <AccountSelect
+              accounts={accounts}
+              label="Conta origem"
+              value={form.from_account_id}
+              onChange={(value) => setForm((current) => ({ ...current, from_account_id: value }))}
+            />
+            <AccountSelect
+              accounts={accounts}
+              label="Conta destino"
+              value={form.to_account_id}
+              onChange={(value) => setForm((current) => ({ ...current, to_account_id: value }))}
+            />
+          </div>
+        ) : (
+          <>
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-muted-foreground">Categoria</span>
+              <Select
+                value={form.category_id}
+                onChange={(event) => setForm((current) => ({ ...current, category_id: event.target.value }))}
+                required
+              >
+                {visibleCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </Select>
+              {!visibleCategories.length ? (
+                <p className="mt-2 text-sm text-rose-600">
+                  Cria primeiro uma categoria para este tipo de movimento.
+                </p>
+              ) : null}
+            </label>
+            <AccountSelect
+              accounts={accounts}
+              label={form.type === "income" ? "Conta onde entrou" : "Conta de onde saiu"}
+              value={form.account_id}
+              onChange={(value) => setForm((current) => ({ ...current, account_id: value }))}
+            />
+          </>
+        )}
 
         <label className="block">
           <span className="mb-2 block text-sm font-medium text-muted-foreground">Descrição</span>
           <Input
-            placeholder="Ex: almoço, cliente, Vinted..."
+            placeholder={form.type === "transfer" ? "Ex: Millennium para Revolut" : "Ex: cliente, almoço, Vinted..."}
             value={form.description}
             onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+          />
+        </label>
+
+        <label className="block">
+          <span className="mb-2 block text-sm font-medium text-muted-foreground">Data</span>
+          <Input
+            type="date"
+            value={form.date}
+            onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))}
             required
           />
         </label>
 
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium text-muted-foreground">Data</span>
-            <Input
-              type="date"
-              value={form.date}
-              onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))}
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium text-muted-foreground">Método</span>
-            <Select
-              value={form.payment_method}
-              onChange={(event) => setForm((current) => ({ ...current, payment_method: event.target.value }))}
-            >
-              {paymentMethods.map((method) => (
-                <option key={method}>{method}</option>
-              ))}
-            </Select>
-          </label>
-        </div>
+        {form.type === "transfer" && form.from_account_id === form.to_account_id ? (
+          <p className="rounded-2xl bg-rose-500/10 p-3 text-sm font-medium text-rose-600">
+            Escolhe duas contas diferentes.
+          </p>
+        ) : null}
 
-        <Button className="w-full" disabled={saving || !form.category_id} size="lg" type="submit">
-          {saving ? "A guardar..." : "Guardar"}
+        <Button className="w-full" disabled={saving || !accounts.length} size="lg" type="submit">
+          {saving ? "A guardar..." : "Guardar movimento"}
         </Button>
       </form>
     </Sheet>
+  );
+}
+
+function AccountSelect({
+  accounts,
+  label,
+  value,
+  onChange
+}: {
+  accounts: Account[];
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-muted-foreground">{label}</span>
+      <Select value={value} onChange={(event) => onChange(event.target.value)} required>
+        {accounts.map((account) => (
+          <option key={account.id} value={account.id}>
+            {account.name}
+          </option>
+        ))}
+      </Select>
+    </label>
   );
 }

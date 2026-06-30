@@ -1,11 +1,23 @@
 "use client";
 
-import { expenseCategories, incomeCategories } from "@/lib/constants";
+import { defaultAccounts, expenseCategories, incomeCategories } from "@/lib/constants";
 import { getMonthRange } from "@/lib/finance";
 import { getSupabase } from "@/lib/supabase/client";
-import type { Category, Goal, Transaction, TransactionType } from "@/lib/types";
+import type { Account, AccountType, Category, CategoryType, Goal, Transaction, TransactionType } from "@/lib/types";
 
 const sharedUserId = "main";
+
+type TransactionInput = {
+  id?: string;
+  type: TransactionType;
+  amount: number;
+  category_id?: string | null;
+  account_id?: string | null;
+  from_account_id?: string | null;
+  to_account_id?: string | null;
+  description: string;
+  date: string;
+};
 
 async function ensureDefaults() {
   const supabase = getSupabase();
@@ -15,29 +27,82 @@ async function ensureDefaults() {
     full_name: "Gonçalo"
   });
 
-  const { data: existing, error } = await supabase
+  const { data: accounts, error: accountsError } = await supabase
+    .from("accounts")
+    .select("name")
+    .eq("user_id", sharedUserId);
+
+  if (accountsError) throw accountsError;
+
+  if (!accounts?.length) {
+    const { error } = await supabase.from("accounts").insert(
+      defaultAccounts.map((account) => ({
+        ...account,
+        balance: 0,
+        currency: "EUR",
+        user_id: sharedUserId
+      }))
+    );
+    if (error) throw error;
+  }
+
+  const { data: categories, error: categoriesError } = await supabase
     .from("categories")
     .select("name,type")
     .eq("user_id", sharedUserId);
 
-  if (error) throw error;
-
-  if (existing?.length) return;
+  if (categoriesError) throw categoriesError;
+  if (categories?.length) return;
 
   const defaults = [
-    ...incomeCategories.map((name) => ({ name, type: "income" as TransactionType })),
-    ...expenseCategories.map((name) => ({ name, type: "expense" as TransactionType }))
+    ...incomeCategories.map((name) => ({ name, type: "income" as CategoryType })),
+    ...expenseCategories.map((name) => ({ name, type: "expense" as CategoryType }))
   ];
 
-  if (defaults.length) {
-    const { error: insertError } = await supabase.from("categories").insert(
-      defaults.map((category) => ({
-        ...category,
-        user_id: sharedUserId
-      }))
-    );
-    if (insertError) throw insertError;
-  }
+  const { error } = await supabase.from("categories").insert(
+    defaults.map((category) => ({
+      ...category,
+      user_id: sharedUserId
+    }))
+  );
+  if (error) throw error;
+}
+
+export async function fetchAccounts() {
+  await ensureDefaults();
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("accounts")
+    .select("*")
+    .eq("user_id", sharedUserId)
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+  return data as Account[];
+}
+
+export async function saveAccount(input: {
+  id?: string;
+  name: string;
+  type: AccountType;
+  balance: number;
+  currency?: string;
+}) {
+  await ensureDefaults();
+  const supabase = getSupabase();
+  const payload = {
+    name: input.name.trim(),
+    type: input.type,
+    balance: Number(input.balance || 0),
+    currency: input.currency || "EUR",
+    user_id: sharedUserId
+  };
+
+  const { error } = input.id
+    ? await supabase.from("accounts").update(payload).eq("id", input.id).eq("user_id", sharedUserId)
+    : await supabase.from("accounts").insert(payload);
+
+  if (error) throw error;
 }
 
 export async function fetchCategories() {
@@ -54,8 +119,8 @@ export async function fetchCategories() {
   return data as Category[];
 }
 
-async function getOrCreateCategory(name: string, type: TransactionType) {
-  const cleanName = name.trim() || (type === "income" ? "Outros" : "Revolut");
+async function getOrCreateCategory(name: string, type: CategoryType) {
+  const cleanName = name.trim() || "Outros";
   const categories = await fetchCategories();
   const existing = categories.find(
     (category) =>
@@ -83,7 +148,7 @@ async function getOrCreateCategory(name: string, type: TransactionType) {
 export async function saveCategory(input: {
   id?: string;
   name: string;
-  type: TransactionType;
+  type: CategoryType;
 }) {
   await ensureDefaults();
   const supabase = getSupabase();
@@ -116,17 +181,26 @@ export async function deleteCategory(id: string) {
   if (error) throw error;
 }
 
+const transactionSelect = `
+  *,
+  categories(id,name,type),
+  accounts:accounts!transactions_account_id_fkey(id,name,type),
+  from_account:accounts!transactions_from_account_id_fkey(id,name,type),
+  to_account:accounts!transactions_to_account_id_fkey(id,name,type)
+`;
+
 export async function fetchTransactions(month: string) {
   await ensureDefaults();
   const supabase = getSupabase();
   const { start, end } = getMonthRange(month);
   const { data, error } = await supabase
     .from("transactions")
-    .select("*, categories(id,name,type)")
+    .select(transactionSelect)
     .eq("user_id", sharedUserId)
     .gte("date", start)
     .lte("date", end)
-    .order("date", { ascending: false });
+    .order("date", { ascending: false })
+    .order("created_at", { ascending: false });
 
   if (error) throw error;
   return data as Transaction[];
@@ -137,7 +211,7 @@ export async function fetchAllTransactions() {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("transactions")
-    .select("*, categories(id,name,type)")
+    .select(transactionSelect)
     .eq("user_id", sharedUserId)
     .order("date", { ascending: true });
 
@@ -145,38 +219,122 @@ export async function fetchAllTransactions() {
   return data as Transaction[];
 }
 
-export async function saveTransaction(input: {
-  id?: string;
-  type: TransactionType;
-  amount: number;
-  category_id: string;
-  description: string;
-  payment_method: string;
-  date: string;
-}) {
+export async function saveTransaction(input: TransactionInput) {
   const supabase = getSupabase();
   await ensureDefaults();
-  const payload = {
-    ...input,
-    user_id: sharedUserId,
-    description: input.description.trim()
-  };
 
-  const { error } = input.id
-    ? await supabase.from("transactions").update(payload).eq("id", input.id)
-    : await supabase.from("transactions").insert(payload);
+  const existing = input.id ? await fetchTransaction(input.id) : null;
+  if (existing) await applyBalanceChange(existing, "reverse");
 
-  if (error) throw error;
+  const payload = normalizeTransactionInput(input);
+  const { data, error } = input.id
+    ? await supabase
+        .from("transactions")
+        .update(payload)
+        .eq("id", input.id)
+        .eq("user_id", sharedUserId)
+        .select(transactionSelect)
+        .single()
+    : await supabase
+        .from("transactions")
+        .insert(payload)
+        .select(transactionSelect)
+        .single();
+
+  if (error) {
+    if (existing) await applyBalanceChange(existing, "apply");
+    throw error;
+  }
+
+  await applyBalanceChange(data as Transaction, "apply");
 }
 
 export async function deleteTransaction(id: string) {
   await ensureDefaults();
   const supabase = getSupabase();
+  const existing = await fetchTransaction(id);
+  if (existing) await applyBalanceChange(existing, "reverse");
+
   const { error } = await supabase
     .from("transactions")
     .delete()
     .eq("id", id)
     .eq("user_id", sharedUserId);
+
+  if (error) {
+    if (existing) await applyBalanceChange(existing, "apply");
+    throw error;
+  }
+}
+
+async function fetchTransaction(id: string) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("transactions")
+    .select(transactionSelect)
+    .eq("id", id)
+    .eq("user_id", sharedUserId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data as Transaction | null;
+}
+
+function normalizeTransactionInput(input: TransactionInput) {
+  const type = input.type;
+  return {
+    user_id: sharedUserId,
+    type,
+    amount: Math.abs(Number(input.amount || 0)),
+    category_id: type === "transfer" ? null : input.category_id || null,
+    account_id: type === "transfer" ? null : input.account_id || null,
+    from_account_id: type === "transfer" ? input.from_account_id || null : null,
+    to_account_id: type === "transfer" ? input.to_account_id || null : null,
+    description: input.description.trim(),
+    date: input.date
+  };
+}
+
+async function applyBalanceChange(transaction: Transaction, mode: "apply" | "reverse") {
+  const amount = Number(transaction.amount || 0);
+  const direction = mode === "apply" ? 1 : -1;
+
+  if (transaction.type === "income" && transaction.account_id) {
+    await incrementAccountBalance(transaction.account_id, amount * direction);
+  }
+
+  if (transaction.type === "expense" && transaction.account_id) {
+    await incrementAccountBalance(transaction.account_id, -amount * direction);
+  }
+
+  if (transaction.type === "transfer") {
+    if (transaction.from_account_id) {
+      await incrementAccountBalance(transaction.from_account_id, -amount * direction);
+    }
+    if (transaction.to_account_id) {
+      await incrementAccountBalance(transaction.to_account_id, amount * direction);
+    }
+  }
+}
+
+async function incrementAccountBalance(accountId: string, delta: number) {
+  const supabase = getSupabase();
+  const { data: account, error: fetchError } = await supabase
+    .from("accounts")
+    .select("balance")
+    .eq("id", accountId)
+    .eq("user_id", sharedUserId)
+    .single();
+
+  if (fetchError) throw fetchError;
+
+  const nextBalance = Number(account.balance || 0) + delta;
+  const { error } = await supabase
+    .from("accounts")
+    .update({ balance: nextBalance })
+    .eq("id", accountId)
+    .eq("user_id", sharedUserId);
+
   if (error) throw error;
 }
 
@@ -184,14 +342,17 @@ export async function importTransactions(
   rows: Array<{
     type: TransactionType;
     amount: number;
-    category: string;
+    category?: string;
     description: string;
     date: string;
-    payment_method?: string;
+    account_name?: string;
+    from_account_name?: string;
+    to_account_name?: string;
   }>
 ) {
   await ensureDefaults();
-  const supabase = getSupabase();
+  const accounts = await fetchAccounts();
+  const fallbackAccount = accounts[0];
   const existing = await fetchAllTransactions();
   const existingKeys = new Set(
     existing.map((transaction) =>
@@ -200,7 +361,10 @@ export async function importTransactions(
         transaction.date,
         Number(transaction.amount).toFixed(2),
         transaction.description?.trim().toLowerCase() || "",
-        transaction.categories?.name?.trim().toLowerCase() || ""
+        transaction.categories?.name?.trim().toLowerCase() || "",
+        transaction.accounts?.name?.trim().toLowerCase() || "",
+        transaction.from_account?.name?.trim().toLowerCase() || "",
+        transaction.to_account?.name?.trim().toLowerCase() || ""
       ].join("|")
     )
   );
@@ -209,32 +373,44 @@ export async function importTransactions(
   let skipped = 0;
 
   for (const row of rows) {
-    const category = await getOrCreateCategory(row.category, row.type);
     const amount = Math.abs(Number(row.amount));
+    const category = row.type === "transfer" ? null : await getOrCreateCategory(row.category || "Outros", row.type as CategoryType);
+    const account = row.type === "transfer" ? null :
+      accounts.find((item) => item.name.toLowerCase() === row.account_name?.toLowerCase()) ||
+      fallbackAccount;
+    const fromAccount = row.type === "transfer"
+      ? accounts.find((item) => item.name.toLowerCase() === row.from_account_name?.toLowerCase())
+      : null;
+    const toAccount = row.type === "transfer"
+      ? accounts.find((item) => item.name.toLowerCase() === row.to_account_name?.toLowerCase())
+      : null;
     const key = [
       row.type,
       row.date,
       amount.toFixed(2),
       row.description.trim().toLowerCase(),
-      category.name.trim().toLowerCase()
+      category?.name.trim().toLowerCase() || "",
+      account?.name.trim().toLowerCase() || "",
+      fromAccount?.name.trim().toLowerCase() || "",
+      toAccount?.name.trim().toLowerCase() || ""
     ].join("|");
 
-    if (existingKeys.has(key)) {
+    if (existingKeys.has(key) || (row.type === "transfer" ? (!fromAccount || !toAccount) : !account || !category)) {
       skipped += 1;
       continue;
     }
 
-    const { error } = await supabase.from("transactions").insert({
-      user_id: sharedUserId,
+    await saveTransaction({
       type: row.type,
       amount,
-      category_id: category.id,
-      description: row.description.trim() || "Transação Revolut",
-      payment_method: row.payment_method || "Revolut",
+      category_id: category?.id || null,
+      account_id: account?.id || null,
+      from_account_id: fromAccount?.id || null,
+      to_account_id: toAccount?.id || null,
+      description: row.description.trim() || "Movimento importado",
       date: row.date
     });
 
-    if (error) throw error;
     existingKeys.add(key);
     inserted += 1;
   }

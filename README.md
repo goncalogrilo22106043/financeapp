@@ -1,19 +1,28 @@
-# FinanceFlow
+# Finanças
 
-App web/PWA de finanças pessoais em português de Portugal, construída com Next.js, React, TypeScript, TailwindCSS, componentes no estilo shadcn/ui e Supabase.
+App web/PWA de finanças pessoais em português de Portugal, construída com Next.js, React, TypeScript, TailwindCSS e Supabase.
+
+## Modelo financeiro
+
+A app usa três conceitos:
+
+- Contas: Millennium, Revolut, Dinheiro ou outras.
+- Receitas/despesas: dinheiro que entra ou sai do património.
+- Transferências: dinheiro movido entre contas próprias.
+
+Transferências não contam para receitas, despesas, lucro nem taxa de poupança. Exemplo: `Millennium -> Revolut 500€` só reduz o saldo do Millennium e aumenta o saldo da Revolut.
 
 ## Funcionalidades
 
-- Sem login: abre direto no dashboard
-- Dados guardados na Supabase numa base partilhada entre PC e telemóvel
-- Ecrã inicial mobile-first com saldo do mês, receitas, despesas e poupança
-- Bottom sheet rápida para adicionar receitas/despesas
-- Página de transações com filtros, pesquisa, edição e remoção
-- Página de categorias para criar, editar e apagar categorias
-- Importador Excel/CSV da Revolut e PDF do Millennium com pré-visualização e seleção manual
-- Página de estatísticas com gráficos simples
-- Página de objetivos financeiros
-- PWA-ready com `manifest.json`, ícone e service worker
+- Dashboard com receitas, despesas, lucro, poupança, património total e saldos por conta.
+- Botão `Novo movimento` com Receita, Despesa ou Transferência.
+- Página Contas para editar saldos e criar novas contas.
+- Página Movimentos com filtros por mês, conta, tipo, categoria e pesquisa.
+- Categorias editáveis para receitas e despesas.
+- Estatísticas que ignoram transferências.
+- Importador Excel/CSV da Revolut e PDF do Millennium com pré-visualização.
+- Dados guardados na Supabase, partilhados entre PC e telemóvel.
+- PWA-ready para instalar no telemóvel.
 
 ## Correr localmente
 
@@ -45,62 +54,42 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 ```
 
+O SQL recria as tabelas `profiles`, `accounts`, `categories`, `transactions` e `goals`. Se já tinhas dados antigos, exporta primeiro antes de executar.
+
 ## Deploy na Vercel
 
-1. Cria um repositório no GitHub.
-2. Coloca estes ficheiros no repositório.
-3. Liga o repositório à Vercel.
-4. Na Vercel, adiciona as variáveis:
+1. Coloca os ficheiros do projeto no GitHub.
+2. Liga o repositório à Vercel.
+3. Na Vercel, adiciona as variáveis:
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 ```
 
-5. Faz deploy.
+4. Faz deploy.
 
-A Vercel deteta automaticamente Next.js. Não precisas de mudar o build command.
+## Importar movimentos
 
-## Estrutura
-
-```text
-app/                  Páginas da app
-components/           Componentes reutilizáveis
-components/ui/        Componentes base estilo shadcn/ui
-components/finance/   Componentes específicos da app financeira
-lib/                  Helpers, tipos e Supabase
-public/               Manifest, ícone e service worker
-supabase/schema.sql   Base de dados e políticas RLS
-```
-
-## Nota sobre dados
-
-Não há ecrã de login. Todos os dispositivos usam o mesmo perfil partilhado `main`, por isso o que adicionas no PC aparece no telemóvel e vice-versa.
-
-Como não há login nem PIN, qualquer pessoa com acesso ao link da app pode ver e alterar os dados. Para uso pessoal, mantém o link privado.
-
-## Importar transações bancárias
-
-1. Na Revolut, exporta o extrato/movimentos em Excel (`.xlsx`) ou CSV.
-2. No Millennium, exporta o extrato/movimentos em PDF.
-3. Na app, abre `Transações`.
+1. Na Revolut, exporta o extrato em Excel (`.xlsx`) ou CSV.
+2. No Millennium, exporta o extrato em PDF.
+3. Na app, abre `Movimentos`.
 4. Clica em `Importar`.
-5. Escolhe o ficheiro.
-6. Confirma a pré-visualização e desmarca o que não quiseres importar.
-7. Se for preciso, muda uma linha entre `Despesa` e `Receita` ou ajusta a categoria.
-8. Clica em `Importar selecionadas`.
+5. Confirma a pré-visualização.
+6. Ajusta Receita/Despesa e categoria, se necessário.
+7. Clica em `Importar selecionadas`.
 
-O importador de PDF usa leitura automática de texto. Como PDFs bancários podem mudar de formato, confirma sempre a pré-visualização antes de importar.
+Importações da Revolut entram na conta `Revolut`. PDFs do Millennium entram na conta `Millennium`.
 
 Regras automáticas:
 
-- Valores negativos entram como despesas.
-- Valores positivos entram como receitas.
-- Reembolsos não são importados.
-- Carregamentos/top-ups, incluindo Apple Pay e Open Banking, não são importados.
-- Transferências para `Gonçalo Grilo` ou `Gonçalo Galvão de Sousa Grilo` não são importadas, porque são movimentos entre contas tuas.
-- No PDF do Millennium, `TRF. P/O Gonçalo Grilo` entra como receita por defeito, porque representa dinheiro vindo da Revolut para o Millennium.
-- No PDF do Millennium, compras `Revolut 5625 Dublin IE` não são importadas porque são carregamentos da Revolut.
-- Movimentos ignorados aparecem desmarcados por defeito, mas podes marcá-los manualmente antes de importar se forem o único registo desse rendimento/despesa.
-- Categorias novas são criadas automaticamente na Supabase com o nome vindo do banco ou sugerido pela app.
-- Duplicados simples são ignorados por tipo, data, valor, descrição e categoria.
+- Compras reais entram como despesas.
+- Créditos reais entram como receitas.
+- Compras `Revolut 5625 Dublin IE` no Millennium entram como transferência `Millennium -> Revolut`.
+- `TRF. P/O Gonçalo Grilo` no Millennium entra como transferência `Revolut -> Millennium`.
+- Transferências puras entre contas ficam fora de receitas, despesas, lucro e estatísticas financeiras.
+- Duplicados simples são ignorados por tipo, data, valor, descrição, categoria e conta.
+
+## Nota sobre acesso
+
+Esta versão não tem login. Todos os dispositivos usam o mesmo perfil partilhado `main`. Mantém o link privado, porque qualquer pessoa com acesso ao link pode ver e alterar os dados.

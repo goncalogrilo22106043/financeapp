@@ -11,9 +11,9 @@ import { TransactionSheet } from "@/components/finance/transaction-sheet";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { summarize } from "@/lib/finance";
-import { fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
-import type { Category, Transaction } from "@/lib/types";
-import { monthKey, monthLabel } from "@/lib/utils";
+import { fetchAccounts, fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
+import type { Account, Category, Transaction } from "@/lib/types";
+import { euros, monthKey, monthLabel } from "@/lib/utils";
 
 export default function HomePage() {
   return <Dashboard />;
@@ -24,21 +24,24 @@ function Dashboard() {
   const [month, setMonth] = useState(monthKey());
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const summary = useMemo(() => summarize(transactions), [transactions]);
+  const summary = useMemo(() => summarize(transactions, accounts), [transactions, accounts]);
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      const [nextCategories, nextTransactions] = await Promise.all([
+      const [nextCategories, nextTransactions, nextAccounts] = await Promise.all([
         fetchCategories(),
-        fetchTransactions(month)
+        fetchTransactions(month),
+        fetchAccounts()
       ]);
       setCategories(nextCategories);
       setTransactions(nextTransactions);
+      setAccounts(nextAccounts);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não consegui carregar os dados.");
     } finally {
@@ -64,6 +67,15 @@ function Dashboard() {
       </div>
 
       <SummaryCards summary={summary} />
+
+      <section className="mt-5 grid gap-3 md:grid-cols-3">
+        {accounts.map((account) => (
+          <Card className="p-4" key={account.id}>
+            <p className="text-sm text-muted-foreground">{account.name}</p>
+            <strong className="mt-2 block text-2xl">{euros(Number(account.balance))}</strong>
+          </Card>
+        ))}
+      </section>
 
       {error ? (
         <Card className="mt-5 border-rose-500/30 bg-rose-500/10 p-4 text-sm font-medium text-rose-700 dark:text-rose-300">
@@ -92,6 +104,7 @@ function Dashboard() {
 
       <TransactionSheet
         categories={categories}
+        accounts={accounts}
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         onSaved={load}

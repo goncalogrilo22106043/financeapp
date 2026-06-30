@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
-import { fetchCategories, fetchGoals, saveGoal } from "@/lib/supabase/queries";
-import type { Category, Goal } from "@/lib/types";
+import { fetchAccounts, fetchCategories, fetchGoals, saveGoal } from "@/lib/supabase/queries";
+import type { Account, Category, Goal } from "@/lib/types";
 import { euros } from "@/lib/utils";
 
 export default function GoalsPage() {
@@ -18,6 +18,7 @@ export default function GoalsPage() {
 function Goals() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [title, setTitle] = useState("Património");
   const [target, setTarget] = useState("40000");
   const [current, setCurrent] = useState("");
@@ -27,9 +28,14 @@ function Goals() {
   async function load() {
     setError("");
     try {
-      const [nextCategories, nextGoals] = await Promise.all([fetchCategories(), fetchGoals()]);
+      const [nextCategories, nextGoals, nextAccounts] = await Promise.all([
+        fetchCategories(),
+        fetchGoals(),
+        fetchAccounts()
+      ]);
       setCategories(nextCategories);
       setGoals(nextGoals);
+      setAccounts(nextAccounts);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não consegui carregar os objetivos.");
     }
@@ -109,6 +115,7 @@ function Goals() {
 
       <TransactionSheet
         categories={categories}
+        accounts={accounts}
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         onSaved={load}

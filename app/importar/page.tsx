@@ -1232,17 +1232,23 @@ function transferSuggestion(reason: string, fromAccountName: string, toAccountNa
 }
 
 function detectMapping(headers: string[]): ColumnMapping {
-  const find = (...keywords: string[]) =>
-    headers.find((header) => keywords.some((keyword) => normalizeValue(header).includes(keyword))) || "";
+  const find = (keywords: string[], excluded: string[] = []) =>
+    headers.find((header) => {
+      const normalized = normalizeValue(header);
+      return (
+        keywords.some((keyword) => normalized.includes(keyword)) &&
+        !excluded.some((keyword) => normalized.includes(keyword))
+      );
+    }) || "";
 
   return {
-    date: find("data", "date", "completed", "started"),
-    description: find("descricao", "descrição", "description", "descritivo", "merchant", "counterparty", "name"),
-    amount: find("amount", "valor", "montante", "value"),
-    debit: find("debito", "débito", "debit", "paid out", "money out", "saida", "saída"),
-    credit: find("credito", "crédito", "credit", "paid in", "money in", "entrada"),
-    currency: find("currency", "moeda"),
-    balance: find("balance", "saldo")
+    date: find(["data lancamento", "data lançamento", "date", "completed", "started", "data"], ["data valor"]),
+    description: find(["descricao", "descrição", "description", "descritivo", "merchant", "counterparty", "name"]),
+    amount: find(["montante", "amount", "valor movimento", "value"], ["data valor", "saldo valor"]),
+    debit: find(["debito", "débito", "debit", "paid out", "money out", "saida", "saída"]),
+    credit: find(["credito", "crédito", "credit", "paid in", "money in", "entrada"]),
+    currency: find(["currency", "moeda"]),
+    balance: find(["saldo", "balance"], ["saldo valor"])
   };
 }
 

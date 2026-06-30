@@ -63,12 +63,46 @@ type ImportResult = {
   skipped: number;
 };
 
+type PdfTextItem = {
+  str: string;
+  transform: number[];
+};
+
+type PdfJs = {
+  GlobalWorkerOptions: {
+    workerSrc: string;
+  };
+  getDocument: (source: {
+    data: Uint8Array;
+  }) => {
+    promise: Promise<{
+      numPages: number;
+      getPage: (pageNumber: number) => Promise<{
+        getTextContent: (options?: { normalizeWhitespace?: boolean }) => Promise<{
+          items: PdfTextItem[];
+        }>;
+      }>;
+    }>;
+  };
+};
+
 const steps = [
   "Carregar ficheiros",
   "Pré-visualização",
   "Confirmar transferências",
   "Guardar"
 ];
+
+const pdfJsVersion = "4.10.38";
+const standardMapping: ColumnMapping = {
+  date: "Data",
+  description: "Descrição",
+  amount: "Valor",
+  debit: "",
+  credit: "",
+  currency: "Moeda",
+  balance: "Saldo"
+};
 
 export default function ImportPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -151,7 +185,7 @@ export default function ImportPage() {
     setParsing(true);
     try {
       const parsedFiles = await Promise.all(
-        pickedFiles.map((file) => parseCsvFile(file, account))
+        pickedFiles.map((file) => parseBankFile(file, account))
       );
       const nextFiles = [...files, ...parsedFiles];
       setFiles(nextFiles);
@@ -271,7 +305,7 @@ export default function ImportPage() {
               Voltar
             </Link>
           </Button>
-          <p className="text-muted-foreground">Revolut e Millennium CSV</p>
+          <p className="text-muted-foreground">Revolut CSV e Millennium PDF/CSV</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight">Importar extratos</h1>
         </div>
       </div>
@@ -312,10 +346,10 @@ export default function ImportPage() {
             <FileUp className="mb-4 h-10 w-10 text-muted-foreground" />
             <span className="text-lg font-bold">Escolher CSV</span>
             <span className="mt-2 max-w-sm text-sm text-muted-foreground">
-              Carrega um extrato de cada vez e escolhe a conta certa antes de carregar.
+              Carrega CSV da Revolut ou PDF/CSV do Millennium. Escolhe a conta certa antes de carregar.
             </span>
             <input
-              accept=".csv,text/csv"
+              accept=".csv,text/csv,application/pdf,.pdf"
               className="sr-only"
               multiple
               type="file"
@@ -633,15 +667,35 @@ function PreviewItem({
   );
 }
 
-async function parseCsvFile(file: File, account: Account): Promise<ImportFile> {
-  if (!file.name.toLowerCase().endsWith(".csv") && file.type && !file.type.includes("csv")) {
-    throw new Error("Por agora esta importação inteligente aceita CSV. Exporta o extrato em CSV no banco.");
+async function parseBankFile(file: File, account: Account): Promise<ImportFile> {
+  const fileName = file.name.toLowerCase();
+  const id = `${file.name}-${account.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  if (fileName.endsWith(".pdf") || file.type === "application/pdf") {
+    const records = await parseMillenniumPdf(file);
+    if (!records.length) {
+      throw new Error("Não encontrei movimentos nesse PDF do Millennium. Confirma se é o extrato combinado com a tabela de movimentos.");
+    }
+
+    return {
+      id,
+      fileName: file.name,
+      accountId: account.id,
+      accountName: account.name,
+      headers: Object.keys(records[0] || standardMapping),
+      records,
+      mapping: standardMapping,
+      needsMapping: false
+    };
+  }
+
+  if (!fileName.endsWith(".csv") && file.type && !file.type.includes("csv")) {
+    throw new Error("Este importador aceita CSV e PDF do Millennium.");
   }
 
   const records = parseCsv(await file.text());
   const headers = Object.keys(records[0] || {});
   const mapping = detectMapping(headers);
-  const id = `${file.name}-${account.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   return {
     id,
@@ -671,6 +725,7 @@ function rowsFromFile(file: ImportFile): PreviewRow[] {
 
     const suggestedType: CategoryType = signedAmount > 0 ? "income" : "expense";
     const suggestion = suggestCategory(description, suggestedType);
+    const transferSuggestion = suggestStandaloneTransfer(file.accountName, description, signedAmount);
 
     parsedRows.push({
       id: `${file.id}-${index}-${date}-${signedAmount}`,
@@ -679,21 +734,293 @@ function rowsFromFile(file: ImportFile): PreviewRow[] {
       selected: true,
       duplicate: false,
       importAnyway: false,
-      type: suggestedType,
-      suggestedType,
+      type: transferSuggestion?.type || suggestedType,
+      suggestedType: transferSuggestion?.type || suggestedType,
       amount: Math.abs(roundMoney(signedAmount)),
       signedAmount: roundMoney(signedAmount),
       date,
       description,
       accountId: file.accountId,
       accountName: file.accountName,
-      category: suggestion.category,
-      confidence: suggestion.confidence,
-      reason: suggestion.reason
+      category: transferSuggestion?.category || suggestion.category,
+      confidence: transferSuggestion?.confidence || suggestion.confidence,
+      reason: transferSuggestion?.reason || suggestion.reason,
+      fromAccountName: transferSuggestion?.fromAccountName,
+      toAccountName: transferSuggestion?.toAccountName
     });
   });
 
   return parsedRows;
+}
+
+async function parseMillenniumPdf(file: File): Promise<Record<string, string>[]> {
+  const pdfjsUrl = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfJsVersion}/build/pdf.mjs`;
+  const pdfjs = (await import(/* webpackIgnore: true */ pdfjsUrl)) as PdfJs;
+  pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfJsVersion}/build/pdf.worker.mjs`;
+
+  const pdf = await pdfjs.getDocument({
+    data: new Uint8Array(await file.arrayBuffer())
+  }).promise;
+  const lines: string[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent({ normalizeWhitespace: true });
+    lines.push(...itemsToLines(content.items));
+  }
+
+  return parseMillenniumLines(lines.map(cleanDescription).filter(Boolean), file.name);
+}
+
+function itemsToLines(items: PdfTextItem[]) {
+  const sorted = items
+    .filter((item) => item.str.trim())
+    .map((item) => ({
+      text: item.str,
+      x: item.transform[4] || 0,
+      y: Math.round(item.transform[5] || 0)
+    }))
+    .sort((a, b) => b.y - a.y || a.x - b.x);
+
+  const rows: Array<{ y: number; items: Array<{ text: string; x: number }> }> = [];
+
+  sorted.forEach((item) => {
+    const row = rows.find((candidate) => Math.abs(candidate.y - item.y) <= 2);
+    if (row) {
+      row.items.push(item);
+      row.y = Math.round((row.y + item.y) / 2);
+    } else {
+      rows.push({ y: item.y, items: [item] });
+    }
+  });
+
+  return rows.map((row) =>
+    row.items
+      .sort((a, b) => a.x - b.x)
+      .map((item) => item.text)
+      .join(" ")
+  );
+}
+
+function parseMillenniumLines(lines: string[], fileName: string): Record<string, string>[] {
+  const chunks: string[] = [];
+  const statementYear = getStatementYear(lines, fileName);
+  let previousBalance = getInitialBalance(lines);
+  let current = "";
+  let tableStarted = false;
+  let tableEnded = false;
+
+  lines.forEach((line) => {
+    if (tableEnded) return;
+
+    const normalizedLine = normalizeValue(line);
+    if (normalizedLine.includes("descritivo") || normalizedLine.includes("saldo inicial")) {
+      tableStarted = true;
+      return;
+    }
+
+    if (!tableStarted || isMillenniumNoiseLine(normalizedLine)) return;
+
+    if (normalizedLine.includes("saldo final")) {
+      if (current) chunks.push(current);
+      tableEnded = true;
+      current = "";
+      return;
+    }
+
+    if (startsWithMillenniumDate(line)) {
+      if (current) chunks.push(current);
+      current = line;
+      return;
+    }
+
+    if (current) current = `${current} ${line}`;
+  });
+
+  if (current) chunks.push(current);
+
+  const records: Record<string, string>[] = [];
+
+  chunks.forEach((chunk) => {
+    const parsed = parseMillenniumMovement(chunk, statementYear, previousBalance);
+    if (!parsed) return;
+    if (Number.isFinite(parsed.balance)) previousBalance = parsed.balance;
+    records.push(parsed.record);
+  });
+
+  return records;
+}
+
+function parseMillenniumMovement(line: string, statementYear: string, previousBalance: number) {
+  const dateMatch = line.match(/\b(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\b/);
+  if (!dateMatch) return null;
+
+  const moneyMatches = findMoneyMatches(line);
+  if (!moneyMatches.length) return null;
+
+  const amountMatch = moneyMatches.length >= 2 ? moneyMatches[moneyMatches.length - 2] : moneyMatches[0];
+  const balanceMatch = moneyMatches.length >= 2 ? moneyMatches[moneyMatches.length - 1] : null;
+  const balance = balanceMatch ? parseMoney(balanceMatch.raw) : Number.NaN;
+  const amount = parseMillenniumSignedAmount(amountMatch.raw, line, previousBalance, balance);
+  const date = parseMillenniumDate(dateMatch[1], statementYear);
+
+  if (!date || !Number.isFinite(amount) || amount === 0) return null;
+
+  const description = cleanMillenniumDescription(
+    line,
+    dateMatch[1],
+    moneyMatches.map((match) => match.raw)
+  );
+
+  if (!description) return null;
+
+  return {
+    balance,
+    record: {
+      Data: date,
+      Descrição: description,
+      Valor: String(roundMoney(amount)),
+      Moeda: "EUR",
+      Saldo: Number.isFinite(balance) ? String(balance) : ""
+    }
+  };
+}
+
+function findMoneyMatches(line: string) {
+  return Array.from(
+    line.matchAll(/(?:[-+]\s*)?\d{1,3}(?:[ .]\d{3})*[,.]\d{2}\s*(?:[-+]|EUR|€|D|C|CR|DR)?/gi)
+  ).map((match) => ({
+    raw: match[0].trim(),
+    index: match.index || 0
+  }));
+}
+
+function parseMillenniumSignedAmount(raw: string, line: string, previousBalance: number, currentBalance: number) {
+  const amount = Math.abs(parseMoney(raw));
+
+  if (Number.isFinite(previousBalance) && Number.isFinite(currentBalance)) {
+    const delta = roundMoney(currentBalance - previousBalance);
+    if (Math.abs(Math.abs(delta) - amount) <= 0.03) return delta;
+  }
+
+  const normalizedRaw = normalizeValue(raw);
+  const normalizedLine = normalizeValue(line);
+
+  if (
+    normalizedRaw.includes("-") ||
+    normalizedRaw.endsWith("d") ||
+    normalizedRaw.endsWith("dr") ||
+    matchesAny(normalizedLine, ["compra", "pagamento", "debito", "débito", "sepa dd", "levantamento", "comissao"])
+  ) {
+    return -amount;
+  }
+
+  if (
+    normalizedRaw.includes("+") ||
+    normalizedRaw.endsWith("c") ||
+    normalizedRaw.endsWith("cr") ||
+    matchesAny(normalizedLine, ["credito", "crédito", "deposito", "depósito", "vencimento", "salario", "salário"])
+  ) {
+    return amount;
+  }
+
+  return -amount;
+}
+
+function parseMillenniumDate(value: string, statementYear: string) {
+  const parts = value.split(/[./-]/).filter(Boolean);
+  if (parts.length < 2) return "";
+  const year = parts[2] ? (parts[2].length === 2 ? `20${parts[2]}` : parts[2]) : statementYear;
+  return [year, parts[1].padStart(2, "0"), parts[0].padStart(2, "0")].join("-");
+}
+
+function cleanMillenniumDescription(line: string, date: string, moneyValues: string[]) {
+  let description = line.replace(date, " ");
+  moneyValues.forEach((value) => {
+    description = description.replace(value, " ");
+  });
+  return cleanDescription(
+    description
+      .replace(/\bdata\s+data\s+transporte\b/gi, " ")
+      .replace(/\bsaldo\b/gi, " ")
+      .replace(/\s+/g, " ")
+  );
+}
+
+function getStatementYear(lines: string[], fileName: string) {
+  const source = `${fileName} ${lines.slice(0, 20).join(" ")}`;
+  return source.match(/\b(20\d{2})\b/)?.[1] || String(new Date().getFullYear());
+}
+
+function getInitialBalance(lines: string[]) {
+  const line = lines.find((item) => normalizeValue(item).includes("saldo inicial"));
+  if (!line) return Number.NaN;
+  const matches = findMoneyMatches(line);
+  return matches.length ? parseMoney(matches[matches.length - 1].raw) : Number.NaN;
+}
+
+function startsWithMillenniumDate(line: string) {
+  return /^\s*\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b/.test(line);
+}
+
+function isMillenniumNoiseLine(line: string) {
+  return matchesAny(line, [
+    "data valor",
+    "pagina",
+    "nib",
+    "iban",
+    "extrato combinado",
+    "millenniumbcp",
+    "este documento"
+  ]);
+}
+
+function suggestStandaloneTransfer(accountName: string, description: string, signedAmount: number) {
+  const account = normalizeValue(accountName);
+  const text = normalizeValue(description);
+
+  if (account.includes("millennium") && signedAmount < 0 && text.includes("revolut")) {
+    return {
+      type: "transfer" as TransactionType,
+      category: "Transferência",
+      confidence: 92,
+      reason: "Carregamento Revolut",
+      fromAccountName: "Millennium",
+      toAccountName: "Revolut"
+    };
+  }
+
+  if (
+    account.includes("millennium") &&
+    signedAmount > 0 &&
+    matchesAny(text, ["trf. p/o goncalo grilo", "trf p/o goncalo grilo", "transferencia p/o goncalo grilo"])
+  ) {
+    return {
+      type: "transfer" as TransactionType,
+      category: "Transferência",
+      confidence: 88,
+      reason: "Revolut para Millennium",
+      fromAccountName: "Revolut",
+      toAccountName: "Millennium"
+    };
+  }
+
+  if (
+    account.includes("millennium") &&
+    signedAmount < 0 &&
+    matchesAny(text, ["trf. p/ goncalo grilo", "trf p/ goncalo grilo", "transferencia p/ goncalo grilo"])
+  ) {
+    return {
+      type: "transfer" as TransactionType,
+      category: "Transferência",
+      confidence: 88,
+      reason: "Millennium para Revolut",
+      fromAccountName: "Millennium",
+      toAccountName: "Revolut"
+    };
+  }
+
+  return null;
 }
 
 function detectMapping(headers: string[]): ColumnMapping {

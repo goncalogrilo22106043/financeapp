@@ -20,7 +20,7 @@ Transferências não contam para receitas, despesas, lucro nem taxa de poupança
 - Página Movimentos com filtros por mês, conta, tipo, categoria e pesquisa.
 - Categorias editáveis para receitas e despesas.
 - Estatísticas que ignoram transferências.
-- Importador CSV inteligente para Revolut e Millennium com pré-visualização, duplicados e transferências internas.
+- Importador inteligente para Revolut CSV e Millennium PDF/CSV com pré-visualização, duplicados e transferências internas.
 - Dados guardados na Supabase, partilhados entre PC e telemóvel.
 - PWA-ready para instalar no telemóvel.
 
@@ -71,11 +71,11 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 ## Importar movimentos
 
-1. Exporta o extrato do banco em CSV.
+1. Exporta o extrato da Revolut em CSV ou o extrato do Millennium em PDF.
 2. Na app, escolhe a conta certa: `Revolut`, `Millennium` ou outra.
 3. Na app, abre `Movimentos`.
 4. Clica em `Importar`.
-5. Carrega o CSV.
+5. Carrega o ficheiro.
 6. Se o formato for desconhecido, associa manualmente as colunas de data, descrição e valor.
 7. Confirma a pré-visualização, ajusta Receita/Despesa/Transferência e categoria.
 8. Clica em `Guardar importação`.

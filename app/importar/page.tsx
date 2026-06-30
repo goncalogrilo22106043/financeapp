@@ -44,7 +44,10 @@ type PreviewRow = {
   type: TransactionType;
   suggestedType: TransactionType;
   amount: number;
+  originalAmount: number;
   signedAmount: number;
+  originalSignedAmount: number;
+  splitWithPartner: boolean;
   date: string;
   description: string;
   accountId: string;
@@ -320,6 +323,25 @@ export default function ImportPage() {
     );
   }
 
+  function toggleSplitWithPartner(row: PreviewRow) {
+    setRows((current) =>
+      current.map((item) => {
+        if (item.id !== row.id) return item;
+
+        const splitWithPartner = !item.splitWithPartner;
+        const factor = splitWithPartner ? 0.5 : 1;
+        const signedAmount = roundMoney(item.originalSignedAmount * factor);
+
+        return {
+          ...item,
+          splitWithPartner,
+          signedAmount,
+          amount: Math.abs(signedAmount)
+        };
+      })
+    );
+  }
+
   async function handleImport() {
     setSaving(true);
     setError("");
@@ -548,6 +570,7 @@ export default function ImportPage() {
                   categoryOptions={categoryOptions}
                   key={row.id}
                   row={row}
+                  onSplit={toggleSplitWithPartner}
                   onUpdate={updateRow}
                 />
               ))}
@@ -717,10 +740,12 @@ function TransferReview({
 function PreviewItem({
   categoryOptions,
   row,
+  onSplit,
   onUpdate
 }: {
   categoryOptions: CategoryOptions;
   row: PreviewRow;
+  onSplit: (row: PreviewRow) => void;
   onUpdate: (id: string, updates: Partial<PreviewRow>) => void;
 }) {
   const categories = row.type === "income" ? categoryOptions.income : categoryOptions.expense;
@@ -763,6 +788,11 @@ function PreviewItem({
               {euros(row.amount)}
             </strong>
           </div>
+          {row.splitWithPartner ? (
+            <p className="mt-1 text-right text-xs font-medium text-muted-foreground">
+              Original: {euros(row.originalAmount)} · guardas metade
+            </p>
+          ) : null}
 
           <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
             {row.type === "transfer" ? (
@@ -781,6 +811,11 @@ function PreviewItem({
                 {row.reason}
               </span>
             ) : null}
+            {row.splitWithPartner ? (
+              <span className="rounded-full bg-violet-500/10 px-3 py-1 text-violet-700 dark:text-violet-300">
+                Dividido por 2
+              </span>
+            ) : null}
           </div>
 
           {row.duplicate && !row.importAnyway ? (
@@ -797,13 +832,21 @@ function PreviewItem({
           <div className="mt-3 grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
             <Select
               value={row.type}
-              onChange={(event) =>
+              onChange={(event) => {
+                const nextType = event.target.value as TransactionType;
                 onUpdate(row.id, {
-                  type: event.target.value as TransactionType,
-                  category: defaultCategoryForType(event.target.value as TransactionType, categoryOptions),
-                  selected: row.duplicate ? row.importAnyway : row.selected
-                })
-              }
+                  type: nextType,
+                  category: defaultCategoryForType(nextType, categoryOptions),
+                  selected: row.duplicate ? row.importAnyway : row.selected,
+                  ...(nextType === "transfer"
+                    ? {
+                        amount: row.originalAmount,
+                        signedAmount: row.originalSignedAmount,
+                        splitWithPartner: false
+                      }
+                    : {})
+                });
+              }}
             >
               <option value="expense">Despesa</option>
               <option value="income">Receita</option>
@@ -828,6 +871,17 @@ function PreviewItem({
               </Select>
             )}
           </div>
+
+          {row.type !== "transfer" ? (
+            <Button
+              className="mt-3 w-full"
+              size="sm"
+              variant={row.splitWithPartner ? "secondary" : "outline"}
+              onClick={() => onSplit(row)}
+            >
+              {row.splitWithPartner ? "Usar valor inteiro" : "Dividir por 2"}
+            </Button>
+          ) : null}
 
           {row.type === "transfer" ? (
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -911,9 +965,10 @@ function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions): Previ
     const suggestedType: CategoryType = signedAmount > 0 ? "income" : "expense";
     const suggestion = suggestCategory(description, suggestedType, categoryOptions);
     const transferSuggestion = suggestStandaloneTransfer(file.accountName, description, signedAmount);
+    const roundedSignedAmount = roundMoney(signedAmount);
 
     parsedRows.push({
-      id: `${file.id}-${index}-${date}-${signedAmount}`,
+      id: `${file.id}-${index}-${date}-${roundedSignedAmount}`,
       fileId: file.id,
       sourceRow: index,
       selected: true,
@@ -921,8 +976,11 @@ function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions): Previ
       importAnyway: false,
       type: transferSuggestion?.type || suggestedType,
       suggestedType: transferSuggestion?.type || suggestedType,
-      amount: Math.abs(roundMoney(signedAmount)),
-      signedAmount: roundMoney(signedAmount),
+      amount: Math.abs(roundedSignedAmount),
+      originalAmount: Math.abs(roundedSignedAmount),
+      signedAmount: roundedSignedAmount,
+      originalSignedAmount: roundedSignedAmount,
+      splitWithPartner: false,
       date,
       description,
       accountId: file.accountId,

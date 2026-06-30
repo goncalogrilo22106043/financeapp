@@ -98,11 +98,22 @@ export async function saveAccount(input: {
     user_id: sharedUserId
   };
 
-  const { error } = input.id
-    ? await supabase.from("accounts").update(payload).eq("id", input.id).eq("user_id", sharedUserId)
-    : await supabase.from("accounts").insert(payload);
+  const { data, error } = input.id
+    ? await supabase
+        .from("accounts")
+        .update(payload)
+        .eq("id", input.id)
+        .eq("user_id", sharedUserId)
+        .select("*")
+        .single()
+    : await supabase
+        .from("accounts")
+        .upsert(payload, { onConflict: "user_id,name" })
+        .select("*")
+        .single();
 
   if (error) throw error;
+  return data as Account;
 }
 
 export async function fetchCategories() {

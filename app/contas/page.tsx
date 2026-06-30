@@ -34,6 +34,7 @@ export default function AccountsPage() {
   const [form, setForm] = useState<AccountForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
 
   const total = useMemo(
     () => accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0),
@@ -60,10 +61,12 @@ export default function AccountsPage() {
 
   function openNew() {
     setForm(emptyForm);
+    setFormError("");
     setAccountSheetOpen(true);
   }
 
   function openEdit(account: Account) {
+    setFormError("");
     setForm({
       id: account.id,
       name: account.name,
@@ -75,17 +78,31 @@ export default function AccountsPage() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    setFormError("");
     setSaving(true);
     try {
-      await saveAccount({
+      const savedAccount = await saveAccount({
         id: form.id,
         name: form.name,
         type: form.type,
         balance: Number(form.balance),
         currency: "EUR"
       });
+      setAccounts((current) => {
+        const exists = current.some((account) => account.id === savedAccount.id);
+        return exists
+          ? current.map((account) => (account.id === savedAccount.id ? savedAccount : account))
+          : [...current, savedAccount];
+      });
       setAccountSheetOpen(false);
+      setForm(emptyForm);
       await load();
+    } catch (err) {
+      setFormError(
+        err instanceof Error
+          ? err.message
+          : "Não consegui guardar a conta. Confirma se a base de dados está atualizada."
+      );
     } finally {
       setSaving(false);
     }
@@ -136,9 +153,17 @@ export default function AccountsPage() {
       <Sheet
         open={accountSheetOpen}
         title={form.id ? "Editar conta" : "Nova conta"}
-        onClose={() => setAccountSheetOpen(false)}
+        onClose={() => {
+          setAccountSheetOpen(false);
+          setFormError("");
+        }}
       >
         <form className="space-y-4" onSubmit={handleSubmit}>
+          {formError ? (
+            <div className="rounded-2xl bg-rose-500/10 p-4 text-sm font-medium text-rose-700 dark:text-rose-300">
+              {formError}
+            </div>
+          ) : null}
           <label className="block">
             <span className="mb-2 block text-sm font-medium text-muted-foreground">Nome</span>
             <Input

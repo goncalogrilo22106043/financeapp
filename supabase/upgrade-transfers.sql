@@ -144,3 +144,39 @@ create index if not exists accounts_user_idx on public.accounts(user_id);
 create index if not exists transactions_account_idx on public.transactions(user_id, account_id);
 create index if not exists transactions_from_account_idx on public.transactions(user_id, from_account_id);
 create index if not exists transactions_to_account_idx on public.transactions(user_id, to_account_id);
+
+create table if not exists public.transaction_rules (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null default 'main' references public.profiles(id) on delete cascade,
+  merchant_pattern text not null,
+  transaction_type text not null check (transaction_type in ('income', 'expense', 'transfer')),
+  category_id uuid references public.categories(id) on delete set null,
+  confidence integer not null default 96 check (confidence >= 0 and confidence <= 100),
+  created_at timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'transaction_rules_user_id_merchant_pattern_key'
+      and conrelid = 'public.transaction_rules'::regclass
+  ) then
+    alter table public.transaction_rules add constraint transaction_rules_user_id_merchant_pattern_key unique (user_id, merchant_pattern);
+  end if;
+end $$;
+
+alter table public.transaction_rules enable row level security;
+
+drop policy if exists "shared_transaction_rules_read" on public.transaction_rules;
+drop policy if exists "shared_transaction_rules_insert" on public.transaction_rules;
+drop policy if exists "shared_transaction_rules_update" on public.transaction_rules;
+drop policy if exists "shared_transaction_rules_delete" on public.transaction_rules;
+
+create policy "shared_transaction_rules_read" on public.transaction_rules for select to anon using (user_id = 'main');
+create policy "shared_transaction_rules_insert" on public.transaction_rules for insert to anon with check (user_id = 'main');
+create policy "shared_transaction_rules_update" on public.transaction_rules for update to anon using (user_id = 'main') with check (user_id = 'main');
+create policy "shared_transaction_rules_delete" on public.transaction_rules for delete to anon using (user_id = 'main');
+
+create index if not exists transaction_rules_user_idx on public.transaction_rules(user_id);
+create index if not exists transaction_rules_pattern_idx on public.transaction_rules(user_id, merchant_pattern);

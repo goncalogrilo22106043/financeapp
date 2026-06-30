@@ -9,8 +9,15 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { expenseCategories, incomeCategories } from "@/lib/constants";
-import { fetchAccounts, fetchAllTransactions, fetchCategories, importTransactions } from "@/lib/supabase/queries";
-import type { Account, Category, CategoryType, Transaction, TransactionType } from "@/lib/types";
+import {
+  fetchAccounts,
+  fetchAllTransactions,
+  fetchCategories,
+  fetchTransactionRules,
+  importTransactions,
+  saveTransactionRules
+} from "@/lib/supabase/queries";
+import type { Account, Category, CategoryType, Transaction, TransactionRule, TransactionType } from "@/lib/types";
 import { cn, euros } from "@/lib/utils";
 
 type ColumnMapping = {
@@ -60,6 +67,9 @@ type PreviewRow = {
   fromAccountName?: string;
   toAccountName?: string;
   transferDecision?: "suggested" | "confirmed" | "ignored";
+  ruleId?: string;
+  learnedRule?: boolean;
+  needsReview: boolean;
 };
 
 type ImportResult = {
@@ -116,6 +126,7 @@ const standardMapping: ColumnMapping = {
 export default function ImportPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [rules, setRules] = useState<TransactionRule[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [existingTransactions, setExistingTransactions] = useState<Transaction[]>([]);
   const [files, setFiles] = useState<ImportFile[]>([]);
@@ -130,13 +141,15 @@ export default function ImportPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [accountRows, transactionRows, categoryRows] = await Promise.all([
+        const [accountRows, transactionRows, categoryRows, ruleRows] = await Promise.all([
           fetchAccounts(),
           fetchAllTransactions(),
-          fetchCategories()
+          fetchCategories(),
+          fetchTransactionRules()
         ]);
         setAccounts(accountRows);
         setCategories(categoryRows);
+        setRules(ruleRows);
         setExistingTransactions(transactionRows);
         setSelectedAccountId(accountRows[0]?.id || "");
       } catch (err) {
@@ -181,6 +194,18 @@ export default function ImportPage() {
   const transferSuggestions = useMemo(
     () => rows.filter((row) => row.type === "transfer" && row.selected && row.transferDecision === "suggested"),
     [rows]
+  );
+  const reviewRows = useMemo(
+    () => rows.filter((row) => row.needsReview || row.duplicate || row.transferDecision === "suggested"),
+    [rows]
+  );
+  const learnedRows = useMemo(
+    () => rows.filter((row) => row.learnedRule && !row.needsReview && !row.duplicate && row.transferDecision !== "suggested"),
+    [rows]
+  );
+  const visibleRows = useMemo(
+    () => (reviewRows.length || !learnedRows.length ? reviewRows.length ? reviewRows : rows : []),
+    [learnedRows.length, reviewRows, rows]
   );
   const needsMapping = files.some((file) => file.needsMapping);
   const activeStep = rows.length ? (selectedTransfers.length ? 2 : 1) : 0;
@@ -249,7 +274,7 @@ export default function ImportPage() {
   }
 
   function rebuildRows(sourceFiles = files) {
-    const parsedRows = sourceFiles.flatMap((file) => rowsFromFile(file, categoryOptions));
+    const parsedRows = sourceFiles.flatMap((file) => rowsFromFile(file, categoryOptions, rules));
     const withDuplicates = markDuplicates(parsedRows, existingTransactions);
     setRows(detectInternalTransfers(withDuplicates));
   }
@@ -261,6 +286,11 @@ export default function ImportPage() {
           ? {
               ...row,
               ...updates,
+              needsReview: updates.needsReview ?? (
+                updates.type || updates.category || updates.fromAccountName || updates.toAccountName
+                  ? false
+                  : row.needsReview
+              ),
               selected: updates.importAnyway ? true : updates.selected ?? row.selected
             }
           : row
@@ -283,7 +313,10 @@ export default function ImportPage() {
       category: "Transferência",
       selected: true,
       reason: "Transferência confirmada",
-      transferDecision: "confirmed"
+      transferDecision: "confirmed",
+      learnedRule: false,
+      ruleId: undefined,
+      needsReview: false
     });
   }
 
@@ -302,6 +335,9 @@ export default function ImportPage() {
           category: suggestion.category,
           confidence: Math.min(item.confidence, 75),
           reason: suggestion.reason,
+          learnedRule: false,
+          ruleId: undefined,
+          needsReview: false,
           selected: item.duplicate && !item.importAnyway ? false : true,
           linkedTransferId: undefined,
           transferGroupId: undefined,
@@ -378,6 +414,8 @@ export default function ImportPage() {
       });
 
       const importResult = await importTransactions(payload);
+      await saveRulesFromRows(selectedRows);
+      setRules(await fetchTransactionRules());
       setResult(importResult);
       setSuccess(`Importação guardada: ${importResult.inserted} movimentos criados.`);
       setFiles([]);
@@ -388,6 +426,21 @@ export default function ImportPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveRulesFromRows(importedRows: PreviewRow[]) {
+    const rulesToSave = importedRows
+      .filter((row) => !row.duplicate || row.importAnyway)
+      .filter((row) => !row.linkedTransferId || row.selected)
+      .map((row) => ({
+        merchant_pattern: deriveMerchantPattern(row.description),
+        transaction_type: row.type,
+        category: row.type === "transfer" ? null : row.category,
+        confidence: row.type === "transfer" ? 98 : 96
+      }))
+      .filter((rule) => rule.merchant_pattern.length >= 3);
+
+    await saveTransactionRules(uniqueRules(rulesToSave));
   }
 
   return (
@@ -538,6 +591,15 @@ export default function ImportPage() {
               <Metric label="Transferências fora das estatísticas" tone="transfer" value={euros(transferTotal)} />
             </div>
 
+            {learnedRows.length ? (
+              <div className="mb-4 rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-800 dark:text-emerald-200">
+                <p className="font-semibold">{learnedRows.length} movimentos classificados por regras aprendidas.</p>
+                <p className="mt-1 opacity-80">
+                  Só aparecem abaixo os movimentos que precisam de revisão, possíveis duplicados ou transferências por confirmar.
+                </p>
+              </div>
+            ) : null}
+
             {transferSuggestions.length ? (
               <TransferReview
                 rows={transferSuggestions}
@@ -565,7 +627,13 @@ export default function ImportPage() {
                 </div>
               ) : null}
 
-              {rows.map((row) => (
+              {rows.length && !visibleRows.length ? (
+                <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-8 text-center text-sm text-emerald-800 dark:text-emerald-200">
+                  Todos os movimentos foram classificados por regras aprendidas. Confirma os totais e guarda a importação.
+                </div>
+              ) : null}
+
+              {visibleRows.map((row) => (
                 <PreviewItem
                   categoryOptions={categoryOptions}
                   key={row.id}
@@ -578,7 +646,7 @@ export default function ImportPage() {
 
             <Button
               className="mt-5 w-full"
-              disabled={!selectedRows.length || saving || needsMapping}
+              disabled={!selectedRows.length || saving || needsMapping || selectedRows.some((row) => row.needsReview)}
               size="lg"
               onClick={handleImport}
             >
@@ -627,6 +695,11 @@ function validateRowsBeforeImport(rows: PreviewRow[], accounts: Account[]) {
   const pendingTransfer = rows.find((row) => row.type === "transfer" && row.transferDecision === "suggested");
   if (pendingTransfer) {
     return `Confirma primeiro a possível transferência "${pendingTransfer.description}" ou escolhe manter como receita/despesa.`;
+  }
+
+  const pendingReview = rows.find((row) => row.needsReview);
+  if (pendingReview) {
+    return `Confirma primeiro o movimento "${pendingReview.description}" para a app aprender essa decisão.`;
   }
 
   const accountNames = new Set(accounts.map((account) => normalizeValue(account.name)));
@@ -811,6 +884,16 @@ function PreviewItem({
                 {row.reason}
               </span>
             ) : null}
+            {row.learnedRule ? (
+              <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-emerald-700 dark:text-emerald-300">
+                Regra aprendida
+              </span>
+            ) : null}
+            {row.needsReview ? (
+              <span className="rounded-full bg-orange-500/10 px-3 py-1 text-orange-700 dark:text-orange-300">
+                Rever
+              </span>
+            ) : null}
             {row.splitWithPartner ? (
               <span className="rounded-full bg-violet-500/10 px-3 py-1 text-violet-700 dark:text-violet-300">
                 Dividido por 2
@@ -829,6 +912,46 @@ function PreviewItem({
             </div>
           ) : null}
 
+          {row.needsReview && row.type !== "transfer" ? (
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <Button size="sm" variant="secondary" onClick={() => onUpdate(row.id, { needsReview: false })}>
+                Confirmar
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  onUpdate(row.id, {
+                    type: "income",
+                    signedAmount: row.amount,
+                    category: defaultCategoryForType("income", categoryOptions),
+                    learnedRule: false,
+                    ruleId: undefined,
+                    needsReview: false
+                  })
+                }
+              >
+                Mudar para receita
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  onUpdate(row.id, {
+                    type: "expense",
+                    signedAmount: -row.amount,
+                    category: defaultCategoryForType("expense", categoryOptions),
+                    learnedRule: false,
+                    ruleId: undefined,
+                    needsReview: false
+                  })
+                }
+              >
+                Mudar para despesa
+              </Button>
+            </div>
+          ) : null}
+
           <div className="mt-3 grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
             <Select
               value={row.type}
@@ -837,6 +960,10 @@ function PreviewItem({
                 onUpdate(row.id, {
                   type: nextType,
                   category: defaultCategoryForType(nextType, categoryOptions),
+                  signedAmount: nextType === "income" ? row.amount : nextType === "expense" ? -row.amount : row.originalSignedAmount,
+                  learnedRule: false,
+                  ruleId: undefined,
+                  needsReview: false,
                   selected: row.duplicate ? row.importAnyway : row.selected,
                   ...(nextType === "transfer"
                     ? {
@@ -861,7 +988,14 @@ function PreviewItem({
             ) : (
               <Select
                 value={row.category}
-                onChange={(event) => onUpdate(row.id, { category: event.target.value })}
+                onChange={(event) =>
+                  onUpdate(row.id, {
+                    category: event.target.value,
+                    learnedRule: false,
+                    ruleId: undefined,
+                    needsReview: false
+                  })
+                }
               >
                 {categories.map((category) => (
                   <option key={category} value={category}>
@@ -948,7 +1082,7 @@ async function parseBankFile(file: File, account: Account): Promise<ImportFile> 
   };
 }
 
-function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions): PreviewRow[] {
+function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions, rules: TransactionRule[]): PreviewRow[] {
   if (!isUsableMapping(file.mapping)) return [];
 
   const parsedRows: PreviewRow[] = [];
@@ -962,10 +1096,17 @@ function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions): Previ
       return;
     }
 
-    const suggestedType: CategoryType = signedAmount > 0 ? "income" : "expense";
-    const suggestion = suggestCategory(description, suggestedType, categoryOptions);
-    const transferSuggestion = suggestStandaloneTransfer(file.accountName, description, signedAmount);
     const roundedSignedAmount = roundMoney(signedAmount);
+    const suggestedType: CategoryType = roundedSignedAmount > 0 ? "income" : "expense";
+    const ruleSuggestion = applyLearnedRule(description, roundedSignedAmount, file.accountName, rules, categoryOptions);
+    const categorySuggestion = suggestCategory(description, suggestedType, categoryOptions);
+    const transferSuggestion = ruleSuggestion?.type === "transfer"
+      ? ruleSuggestion
+      : suggestStandaloneTransfer(file.accountName, description, roundedSignedAmount);
+    const finalType = ruleSuggestion?.type || transferSuggestion?.type || suggestedType;
+    const finalCategory = ruleSuggestion?.category || transferSuggestion?.category || categorySuggestion.category;
+    const finalConfidence = ruleSuggestion?.confidence || transferSuggestion?.confidence || categorySuggestion.confidence;
+    const finalReason = ruleSuggestion?.reason || transferSuggestion?.reason || categorySuggestion.reason;
 
     parsedRows.push({
       id: `${file.id}-${index}-${date}-${roundedSignedAmount}`,
@@ -974,8 +1115,8 @@ function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions): Previ
       selected: true,
       duplicate: false,
       importAnyway: false,
-      type: transferSuggestion?.type || suggestedType,
-      suggestedType: transferSuggestion?.type || suggestedType,
+      type: finalType,
+      suggestedType: finalType,
       amount: Math.abs(roundedSignedAmount),
       originalAmount: Math.abs(roundedSignedAmount),
       signedAmount: roundedSignedAmount,
@@ -985,12 +1126,15 @@ function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions): Previ
       description,
       accountId: file.accountId,
       accountName: file.accountName,
-      category: transferSuggestion?.category || suggestion.category,
-      confidence: transferSuggestion?.confidence || suggestion.confidence,
-      reason: transferSuggestion?.reason || suggestion.reason,
+      category: finalCategory,
+      confidence: finalConfidence,
+      reason: finalReason,
       fromAccountName: transferSuggestion?.fromAccountName,
       toAccountName: transferSuggestion?.toAccountName,
-      transferDecision: transferSuggestion ? "suggested" : undefined
+      transferDecision: transferSuggestion && !ruleSuggestion ? "suggested" : undefined,
+      ruleId: ruleSuggestion?.ruleId,
+      learnedRule: Boolean(ruleSuggestion),
+      needsReview: !ruleSuggestion
     });
   });
 
@@ -1228,6 +1372,78 @@ function isMillenniumNoiseLine(line: string) {
     "millenniumbcp",
     "este documento"
   ]);
+}
+
+function applyLearnedRule(
+  description: string,
+  signedAmount: number,
+  accountName: string,
+  rules: TransactionRule[],
+  categoryOptions: CategoryOptions
+) {
+  const match = findBestRule(description, rules);
+  if (!match) return null;
+
+  const rule = match.rule;
+  const type = rule.transaction_type;
+  const category = type === "transfer"
+    ? "Transferência"
+    : resolveCategoryName(rule.categories?.name || "Outros", type, categoryOptions);
+  const transfer = type === "transfer"
+    ? inferTransferFromRule(accountName, description, signedAmount)
+    : null;
+
+  return {
+    type,
+    category,
+    confidence: Math.min(100, Math.max(rule.confidence || 90, match.score)),
+    reason: `Regra aprendida: ${rule.merchant_pattern}`,
+    ruleId: rule.id,
+    fromAccountName: transfer?.fromAccountName,
+    toAccountName: transfer?.toAccountName
+  };
+}
+
+function findBestRule(description: string, rules: TransactionRule[]) {
+  const text = normalizeValue(description);
+  if (!text) return null;
+
+  return rules
+    .map((rule) => {
+      const pattern = normalizeValue(rule.merchant_pattern);
+      if (!pattern) return null;
+
+      let score = descriptionSimilarity(text, pattern) * 100;
+      if (text === pattern) score = 100;
+      else if (text.startsWith(pattern)) score = Math.max(score, 96);
+      else if (text.endsWith(pattern)) score = Math.max(score, 94);
+      else if (text.includes(pattern)) score = Math.max(score, 92);
+      else if (pattern.includes(text) && text.length >= 5) score = Math.max(score, 88);
+
+      return score >= 78 ? { rule, score: Math.round(score) } : null;
+    })
+    .filter((match): match is { rule: TransactionRule; score: number } => Boolean(match))
+    .sort((a, b) => b.score - a.score || (b.rule.confidence || 0) - (a.rule.confidence || 0))[0] || null;
+}
+
+function inferTransferFromRule(accountName: string, description: string, signedAmount: number) {
+  const standalone = suggestStandaloneTransfer(accountName, description, signedAmount);
+  if (standalone) {
+    return {
+      fromAccountName: standalone.fromAccountName,
+      toAccountName: standalone.toAccountName
+    };
+  }
+
+  const text = normalizeValue(description);
+  const current = accountName;
+  const other = text.includes("revolut") || normalizeValue(accountName).includes("millennium")
+    ? "Revolut"
+    : "Millennium";
+
+  return signedAmount < 0
+    ? { fromAccountName: current, toAccountName: other }
+    : { fromAccountName: other, toAccountName: current };
 }
 
 function suggestStandaloneTransfer(accountName: string, description: string, signedAmount: number) {
@@ -1487,6 +1703,30 @@ function resolveCategoryName(category: string, type: CategoryType, categoryOptio
 function defaultCategoryForType(type: TransactionType, categoryOptions: CategoryOptions) {
   if (type === "transfer") return "Transferência";
   return resolveCategoryName("Outros", type, categoryOptions);
+}
+
+function deriveMerchantPattern(description: string) {
+  const cleaned = cleanDescription(description)
+    .replace(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g, " ")
+    .replace(/\b\d{4,}\b/g, " ")
+    .replace(/\b[0-9a-f]{8,}\b/gi, " ")
+    .replace(/\bpt\d+\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const words = cleaned.split(" ").filter(Boolean);
+  if (words.length <= 4) return cleaned;
+  return words.slice(0, 4).join(" ");
+}
+
+function uniqueRules<T extends { merchant_pattern: string }>(rules: T[]) {
+  const seen = new Set<string>();
+  return rules.filter((rule) => {
+    const key = normalizeValue(rule.merchant_pattern);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function readTextFile(file: File) {

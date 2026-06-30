@@ -1,6 +1,7 @@
 create extension if not exists "pgcrypto";
 
 drop table if exists public.transactions;
+drop table if exists public.transaction_rules;
 drop table if exists public.categories;
 drop table if exists public.accounts;
 drop table if exists public.goals;
@@ -64,6 +65,17 @@ create table public.transactions (
   )
 );
 
+create table public.transaction_rules (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null default 'main' references public.profiles(id) on delete cascade,
+  merchant_pattern text not null,
+  transaction_type text not null check (transaction_type in ('income', 'expense', 'transfer')),
+  category_id uuid references public.categories(id) on delete set null,
+  confidence integer not null default 96 check (confidence >= 0 and confidence <= 100),
+  created_at timestamptz not null default now(),
+  unique (user_id, merchant_pattern)
+);
+
 create table public.goals (
   id uuid primary key default gen_random_uuid(),
   user_id text not null default 'main' references public.profiles(id) on delete cascade,
@@ -102,6 +114,7 @@ alter table public.profiles enable row level security;
 alter table public.accounts enable row level security;
 alter table public.categories enable row level security;
 alter table public.transactions enable row level security;
+alter table public.transaction_rules enable row level security;
 alter table public.goals enable row level security;
 
 create policy "shared_profile_read" on public.profiles for select to anon using (id = 'main');
@@ -123,6 +136,11 @@ create policy "shared_transactions_insert" on public.transactions for insert to 
 create policy "shared_transactions_update" on public.transactions for update to anon using (user_id = 'main') with check (user_id = 'main');
 create policy "shared_transactions_delete" on public.transactions for delete to anon using (user_id = 'main');
 
+create policy "shared_transaction_rules_read" on public.transaction_rules for select to anon using (user_id = 'main');
+create policy "shared_transaction_rules_insert" on public.transaction_rules for insert to anon with check (user_id = 'main');
+create policy "shared_transaction_rules_update" on public.transaction_rules for update to anon using (user_id = 'main') with check (user_id = 'main');
+create policy "shared_transaction_rules_delete" on public.transaction_rules for delete to anon using (user_id = 'main');
+
 create policy "shared_goals_read" on public.goals for select to anon using (user_id = 'main');
 create policy "shared_goals_insert" on public.goals for insert to anon with check (user_id = 'main');
 create policy "shared_goals_update" on public.goals for update to anon using (user_id = 'main') with check (user_id = 'main');
@@ -133,5 +151,7 @@ create index transactions_user_date_idx on public.transactions(user_id, date des
 create index transactions_account_idx on public.transactions(user_id, account_id);
 create index transactions_from_account_idx on public.transactions(user_id, from_account_id);
 create index transactions_to_account_idx on public.transactions(user_id, to_account_id);
+create index transaction_rules_user_idx on public.transaction_rules(user_id);
+create index transaction_rules_pattern_idx on public.transaction_rules(user_id, merchant_pattern);
 create index categories_user_type_idx on public.categories(user_id, type);
 create index goals_user_idx on public.goals(user_id);

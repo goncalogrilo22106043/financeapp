@@ -45,6 +45,17 @@ export type Transaction = {
   to_account?: Pick<Account, "id" | "name" | "type"> | null;
 };
 
+export type TransactionRule = {
+  id: string;
+  user_id: string;
+  merchant_pattern: string;
+  transaction_type: TransactionType;
+  category_id: string | null;
+  confidence: number;
+  created_at: string;
+  categories?: Pick<Category, "id" | "name" | "type"> | null;
+};
+
 export type Goal = {
   id: string;
   user_id: string;

@@ -3,7 +3,7 @@
 import { defaultAccounts, expenseCategories, incomeCategories } from "@/lib/constants";
 import { getMonthRange } from "@/lib/finance";
 import { getSupabase } from "@/lib/supabase/client";
-import type { Account, AccountType, Category, CategoryType, Goal, Transaction, TransactionType } from "@/lib/types";
+import type { Account, AccountType, Category, CategoryType, Goal, Transaction, TransactionRule, TransactionType } from "@/lib/types";
 
 const sharedUserId = "main";
 
@@ -151,6 +151,84 @@ export async function fetchCategories() {
 
   if (error) throw error;
   return data as Category[];
+}
+
+const transactionRuleSelect = "*, categories(id,name,type)";
+
+export async function fetchTransactionRules() {
+  await ensureDefaults();
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("transaction_rules")
+    .select(transactionRuleSelect)
+    .eq("user_id", sharedUserId)
+    .order("confidence", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    if (isMissingTableError(error)) return [] as TransactionRule[];
+    throw error;
+  }
+
+  return data as TransactionRule[];
+}
+
+export async function saveTransactionRules(
+  rules: Array<{
+    merchant_pattern: string;
+    transaction_type: TransactionType;
+    category?: string | null;
+    confidence?: number;
+  }>
+) {
+  await ensureDefaults();
+  const supabase = getSupabase();
+  const categories = await fetchCategories();
+  const payload: Array<{
+    user_id: string;
+    merchant_pattern: string;
+    transaction_type: TransactionType;
+    category_id: string | null;
+    confidence: number;
+  }> = rules
+    .map((rule) => {
+      const pattern = rule.merchant_pattern.trim();
+      if (!pattern) return null;
+
+      const category = rule.transaction_type === "transfer"
+        ? null
+        : categories.find(
+            (item) =>
+              item.type === rule.transaction_type &&
+              item.name.localeCompare(rule.category || "", "pt-PT", { sensitivity: "accent" }) === 0
+          );
+
+      return {
+        user_id: sharedUserId,
+        merchant_pattern: pattern,
+        transaction_type: rule.transaction_type,
+        category_id: category?.id || null,
+        confidence: Math.max(50, Math.min(100, Math.round(rule.confidence || 96)))
+      };
+    })
+    .filter((rule): rule is {
+      user_id: string;
+      merchant_pattern: string;
+      transaction_type: TransactionType;
+      category_id: string | null;
+      confidence: number;
+    } => Boolean(rule));
+
+  if (!payload.length) return;
+
+  const { error } = await supabase
+    .from("transaction_rules")
+    .upsert(payload, { onConflict: "user_id,merchant_pattern" });
+
+  if (error) {
+    if (isMissingTableError(error)) return;
+    throw error;
+  }
 }
 
 async function getOrCreateCategory(name: string, type: CategoryType) {
@@ -501,6 +579,10 @@ function normalizeImportText(value: string) {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function isMissingTableError(error: { code?: string; message?: string }) {
+  return error.code === "42P01" || Boolean(error.message?.toLowerCase().includes("transaction_rules"));
 }
 
 export async function fetchGoals() {

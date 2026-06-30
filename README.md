@@ -20,7 +20,7 @@ Transferências não contam para receitas, despesas, lucro nem taxa de poupança
 - Página Movimentos com filtros por mês, conta, tipo, categoria e pesquisa.
 - Categorias editáveis para receitas e despesas.
 - Estatísticas que ignoram transferências.
-- Importador inteligente para Revolut CSV e Millennium PDF/CSV com pré-visualização, duplicados e transferências internas.
+- Importador inteligente para Revolut CSV e Millennium PDF/CSV com pré-visualização, duplicados, transferências internas e regras aprendidas.
 - Dados guardados na Supabase, partilhados entre PC e telemóvel.
 - PWA-ready para instalar no telemóvel.
 
@@ -54,9 +54,9 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 ```
 
-O SQL recria as tabelas `profiles`, `accounts`, `categories`, `transactions` e `goals`. Se já tinhas dados antigos, exporta primeiro antes de executar.
+O SQL recria as tabelas `profiles`, `accounts`, `categories`, `transactions`, `transaction_rules` e `goals`. Se já tinhas dados antigos, exporta primeiro antes de executar.
 
-Se já tens dados na Supabase e a app der erro ao guardar transferências/importações, executa antes o ficheiro `supabase/upgrade-transfers.sql`. Esse ficheiro atualiza a estrutura sem apagar os dados.
+Se já tens dados na Supabase, executa o ficheiro `supabase/upgrade-transfers.sql`. Esse ficheiro atualiza a estrutura sem apagar os dados e cria a tabela `transaction_rules`, usada para a app aprender as tuas decisões de importação.
 
 ## Deploy na Vercel
 
@@ -79,10 +79,12 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY
 4. Clica em `Importar`.
 5. Carrega o ficheiro.
 6. Se o formato for desconhecido, associa manualmente as colunas de data, descrição e valor.
-7. Confirma a pré-visualização, ajusta Receita/Despesa/Transferência e categoria.
+7. Confirma apenas os movimentos por rever, ajusta Receita/Despesa/Transferência e categoria.
 8. Clica em `Guardar importação`.
 
-A importação nunca guarda movimentos sem revisão final.
+A importação nunca guarda movimentos desconhecidos sem confirmação. Quando confirmas uma decisão, a app guarda uma regra para reconhecer descrições semelhantes no mês seguinte.
+
+Podes usar `Dividir por 2` num movimento quando uma despesa/rendimento foi partilhado com outra pessoa. Nesse caso, a app guarda apenas metade do valor.
 
 Regras automáticas:
 
@@ -92,6 +94,7 @@ Regras automáticas:
 - Top-ups, MB WAY, SEPA, Revolut, Millennium e descrições de transferência ajudam a ligar os movimentos.
 - Transferências puras entre contas ficam fora de receitas, despesas, lucro e estatísticas financeiras.
 - Possíveis duplicados aparecem marcados e ficam ignorados, exceto se escolheres `Importar mesmo assim`.
+- Descrições já aprendidas, como Spotify, Galp, Apple Pay Top Up ou CGSneakers, são classificadas automaticamente por regras guardadas em `transaction_rules`.
 
 ## Nota sobre acesso
 

@@ -34,6 +34,7 @@ export function summarize(transactions: Transaction[], accounts: Account[] = [])
 export function sumByType(transactions: Transaction[], type: CategoryType) {
   return transactions
     .filter((transaction) => transaction.type === type)
+    .filter((transaction) => !(type === "income" && isReimbursement(transaction)))
     .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
 }
 
@@ -41,6 +42,7 @@ export function totalsByCategory(transactions: Transaction[], type: CategoryType
   const grouped = new Map<string, number>();
   transactions
     .filter((transaction) => transaction.type === type)
+    .filter((transaction) => !(type === "income" && isReimbursement(transaction)))
     .forEach((transaction) => {
       const category = transaction.categories?.name || "Sem categoria";
       grouped.set(category, (grouped.get(category) || 0) + Number(transaction.amount || 0));
@@ -55,6 +57,7 @@ export function totalsByAccount(transactions: Transaction[], type: "expense" | "
   const grouped = new Map<string, number>();
   transactions
     .filter((transaction) => transaction.type === type)
+    .filter((transaction) => !(type === "income" && isReimbursement(transaction)))
     .forEach((transaction) => {
       const account = transaction.accounts?.name || "Sem conta";
       grouped.set(account, (grouped.get(account) || 0) + Number(transaction.amount || 0));
@@ -63,4 +66,16 @@ export function totalsByAccount(transactions: Transaction[], type: "expense" | "
   return Array.from(grouped, ([name, value]) => ({ name, value })).sort(
     (a, b) => b.value - a.value
   );
+}
+
+export function isReimbursement(transaction: Transaction) {
+  return normalizeFinanceLabel(transaction.categories?.name || "") === "reembolsos";
+}
+
+function normalizeFinanceLabel(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }

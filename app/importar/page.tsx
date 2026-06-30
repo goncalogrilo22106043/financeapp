@@ -167,7 +167,11 @@ export default function ImportPage() {
     [rows]
   );
   const selectedIncome = useMemo(
-    () => selectedRows.filter((row) => row.type === "income"),
+    () => selectedRows.filter((row) => row.type === "income" && !isReimbursementRow(row)),
+    [selectedRows]
+  );
+  const selectedReimbursements = useMemo(
+    () => selectedRows.filter((row) => row.type === "income" && isReimbursementRow(row)),
     [selectedRows]
   );
   const selectedExpenses = useMemo(
@@ -189,6 +193,10 @@ export default function ImportPage() {
   const transferTotal = useMemo(
     () => selectedTransfers.reduce((sum, row) => sum + row.amount, 0),
     [selectedTransfers]
+  );
+  const reimbursementTotal = useMemo(
+    () => selectedReimbursements.reduce((sum, row) => sum + row.amount, 0),
+    [selectedReimbursements]
   );
   const realProfit = incomeTotal - expenseTotal;
   const transferSuggestions = useMemo(
@@ -447,6 +455,7 @@ export default function ImportPage() {
     const rulesToSave = importedRows
       .filter((row) => !row.duplicate || row.importAnyway)
       .filter((row) => !row.linkedTransferId || row.selected)
+      .filter((row) => row.type !== "transfer" || isReliableInternalTransferDescription(row.description))
       .map((row) => ({
         merchant_pattern: deriveMerchantPattern(row.description),
         transaction_type: row.type,
@@ -598,11 +607,12 @@ export default function ImportPage() {
               </div>
             </div>
 
-            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-6">
               <Metric label="Selecionadas" value={String(selectedRows.length)} />
               <Metric label="Receitas reais" tone="income" value={euros(incomeTotal)} />
               <Metric label="Despesas reais" tone="expense" value={euros(expenseTotal)} />
               <Metric label="Lucro real" tone={realProfit >= 0 ? "income" : "expense"} value={euros(realProfit)} />
+              <Metric label="Reembolsos fora do lucro" tone="neutral" value={euros(reimbursementTotal)} />
               <Metric label="Transferências fora das estatísticas" tone="transfer" value={euros(transferTotal)} />
             </div>
 
@@ -726,6 +736,10 @@ function validateRowsBeforeImport(rows: PreviewRow[], accounts: Account[]) {
   });
 
   if (invalidTransfer) {
+    if (!isReliableInternalTransferDescription(invalidTransfer.description)) {
+      return `O movimento "${invalidTransfer.description}" parece dinheiro devolvido por outra pessoa. Marca como Reembolso para entrar no saldo sem contar como rendimento real.`;
+    }
+
     return `A transferência "${invalidTransfer.description}" precisa de conta de origem e destino válidas. Confirma se existem as contas Millennium e Revolut em Contas.`;
   }
 
@@ -752,7 +766,7 @@ function Metric({
 }: {
   label: string;
   value: string;
-  tone?: "income" | "expense" | "transfer";
+  tone?: "income" | "expense" | "transfer" | "neutral";
 }) {
   return (
     <div
@@ -760,7 +774,8 @@ function Metric({
         "rounded-2xl bg-muted p-4",
         tone === "income" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
         tone === "expense" && "bg-rose-500/10 text-rose-700 dark:text-rose-300",
-        tone === "transfer" && "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+        tone === "transfer" && "bg-sky-500/10 text-sky-700 dark:text-sky-300",
+        tone === "neutral" && "bg-violet-500/10 text-violet-700 dark:text-violet-300"
       )}
     >
       <p className="text-xs opacity-75">{label}</p>
@@ -928,7 +943,7 @@ function PreviewItem({
           ) : null}
 
           {row.needsReview && row.type !== "transfer" ? (
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <div className="mt-3 grid gap-2 sm:grid-cols-4">
               <Button size="sm" variant="secondary" onClick={() => onUpdate(row.id, { needsReview: false })}>
                 Confirmar
               </Button>
@@ -947,6 +962,22 @@ function PreviewItem({
                 }
               >
                 Mudar para receita
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  onUpdate(row.id, {
+                    type: "income",
+                    signedAmount: row.amount,
+                    category: resolveCategoryName("Reembolsos", "income", categoryOptions),
+                    learnedRule: false,
+                    ruleId: undefined,
+                    needsReview: false
+                  })
+                }
+              >
+                Marcar reembolso
               </Button>
               <Button
                 size="sm"
@@ -996,9 +1027,35 @@ function PreviewItem({
             </Select>
 
             {row.type === "transfer" ? (
-              <div className="rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground">
-                {row.fromAccountName || "Origem"} → {row.toAccountName || "Destino"}
-                {!row.selected && row.linkedTransferId ? " · já incluída na transferência ligada" : ""}
+              <div className="space-y-2">
+                <div className="rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground">
+                  {row.fromAccountName || "Origem"} → {row.toAccountName || "Destino"}
+                  {!row.selected && row.linkedTransferId ? " · já incluída na transferência ligada" : ""}
+                </div>
+                {!isReliableInternalTransferDescription(row.description) ? (
+                  <Button
+                    className="w-full"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      onUpdate(row.id, {
+                        type: "income",
+                        signedAmount: row.amount,
+                        category: resolveCategoryName("Reembolsos", "income", categoryOptions),
+                        fromAccountName: undefined,
+                        toAccountName: undefined,
+                        linkedTransferId: undefined,
+                        transferGroupId: undefined,
+                        transferDecision: undefined,
+                        learnedRule: false,
+                        ruleId: undefined,
+                        needsReview: false
+                      })
+                    }
+                  >
+                    Marcar como reembolso
+                  </Button>
+                ) : null}
               </div>
             ) : (
               <Select
@@ -1401,12 +1458,18 @@ function applyLearnedRule(
 
   const rule = match.rule;
   const type = rule.transaction_type;
+  if (type === "transfer" && !isReliableInternalTransferDescription(description)) {
+    return null;
+  }
+
   const category = type === "transfer"
     ? "Transferência"
     : resolveCategoryName(rule.categories?.name || "Outros", type, categoryOptions);
   const transfer = type === "transfer"
     ? inferTransferFromRule(accountName, description, signedAmount)
     : null;
+
+  if (type === "transfer" && !transfer) return null;
 
   return {
     type,
@@ -1435,13 +1498,16 @@ function findBestRule(description: string, rules: TransactionRule[]) {
       else if (text.includes(pattern)) score = Math.max(score, 92);
       else if (pattern.includes(text) && text.length >= 5) score = Math.max(score, 88);
 
-      return score >= 78 ? { rule, score: Math.round(score) } : null;
+      const minimumScore = rule.transaction_type === "transfer" ? 90 : 78;
+      return score >= minimumScore ? { rule, score: Math.round(score) } : null;
     })
     .filter((match): match is { rule: TransactionRule; score: number } => Boolean(match))
     .sort((a, b) => b.score - a.score || (b.rule.confidence || 0) - (a.rule.confidence || 0))[0] || null;
 }
 
 function inferTransferFromRule(accountName: string, description: string, signedAmount: number) {
+  if (!isReliableInternalTransferDescription(description)) return null;
+
   const standalone = suggestStandaloneTransfer(accountName, description, signedAmount);
   if (standalone) {
     return {
@@ -1459,6 +1525,26 @@ function inferTransferFromRule(accountName: string, description: string, signedA
   return signedAmount < 0
     ? { fromAccountName: current, toAccountName: other }
     : { fromAccountName: other, toAccountName: current };
+}
+
+function isReliableInternalTransferDescription(description: string) {
+  const text = normalizeValue(description);
+  return matchesAny(text, [
+    "goncalo grilo",
+    "gonçalo grilo",
+    "g grilo",
+    "revolut",
+    "millennium",
+    "bcp",
+    "apple pay",
+    "open banking",
+    "top up",
+    "top-up",
+    "card top-up",
+    "card top up",
+    "carregamento",
+    "dublin ie"
+  ]);
 }
 
 function suggestStandaloneTransfer(accountName: string, description: string, signedAmount: number) {
@@ -1648,6 +1734,7 @@ function suggestCategory(description: string, type: CategoryType, categoryOption
     suggestion(resolveCategoryName(category, type, categoryOptions), confidence, reason);
 
   if (type === "income") {
+    if (looksLikeIncomingReimbursement(text)) return pick("Reembolsos", 86, "Possível reembolso");
     if (matchesAny(text, ["vinted"])) return pick("Vinted", 92, "Vinted");
     if (matchesAny(text, ["cgsneakers", "cg sneakers"])) return pick("CGSneakers", 92, "CGSneakers");
     if (matchesAny(text, ["salario", "salário", "vencimento", "ordenado"])) return pick("Salário", 90, "Salário");
@@ -1686,6 +1773,16 @@ function suggestCategory(description: string, type: CategoryType, categoryOption
   return pick("Outros", 68, "Despesa detetada");
 }
 
+function looksLikeIncomingReimbursement(text: string) {
+  return matchesAny(text, [
+    "trf. p/o",
+    "trf p/o",
+    "transferencia p/o",
+    "transferência p/o",
+    "mb way"
+  ]) && !isReliableInternalTransferDescription(text);
+}
+
 function suggestion(category: string, confidence: number, reason: string) {
   return { category, confidence, reason };
 }
@@ -1718,6 +1815,10 @@ function resolveCategoryName(category: string, type: CategoryType, categoryOptio
 function defaultCategoryForType(type: TransactionType, categoryOptions: CategoryOptions) {
   if (type === "transfer") return "Transferência";
   return resolveCategoryName("Outros", type, categoryOptions);
+}
+
+function isReimbursementRow(row: PreviewRow) {
+  return normalizeValue(row.category) === "reembolsos";
 }
 
 function deriveMerchantPattern(description: string) {

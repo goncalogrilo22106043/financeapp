@@ -86,6 +86,8 @@ A importação nunca guarda movimentos desconhecidos sem confirmação. Quando c
 
 Podes usar `Dividir por 2` num movimento quando uma despesa/rendimento foi partilhado com outra pessoa. Nesse caso, a app guarda apenas metade do valor.
 
+Reembolsos devem ser guardados como `Receita > Reembolsos`. Entram no saldo da conta, mas ficam fora de receitas reais, lucro, gráficos de rendimento e taxa de poupança.
+
 Regras automáticas:
 
 - Compras reais entram como despesas.

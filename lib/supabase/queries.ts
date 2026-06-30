@@ -116,6 +116,29 @@ export async function saveAccount(input: {
   return data as Account;
 }
 
+export async function deleteAccount(id: string) {
+  await ensureDefaults();
+  const supabase = getSupabase();
+  const { count, error: countError } = await supabase
+    .from("transactions")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", sharedUserId)
+    .or(`account_id.eq.${id},from_account_id.eq.${id},to_account_id.eq.${id}`);
+
+  if (countError) throw countError;
+  if ((count || 0) > 0) {
+    throw new Error("Esta conta tem movimentos associados. Apaga ou edita esses movimentos antes de apagar a conta.");
+  }
+
+  const { error } = await supabase
+    .from("accounts")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", sharedUserId);
+
+  if (error) throw error;
+}
+
 export async function fetchCategories() {
   await ensureDefaults();
   const supabase = getSupabase();

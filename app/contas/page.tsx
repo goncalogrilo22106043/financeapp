@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, WalletCards } from "lucide-react";
+import { Pencil, Plus, Trash2, WalletCards } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { TransactionSheet } from "@/components/finance/transaction-sheet";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Sheet } from "@/components/ui/sheet";
-import { fetchAccounts, fetchCategories, saveAccount } from "@/lib/supabase/queries";
+import { deleteAccount, fetchAccounts, fetchCategories, saveAccount } from "@/lib/supabase/queries";
 import type { Account, AccountType, Category } from "@/lib/types";
 import { euros } from "@/lib/utils";
 
@@ -108,6 +108,22 @@ export default function AccountsPage() {
     }
   }
 
+  async function remove(account: Account) {
+    const confirmed = window.confirm(
+      `Apagar a conta "${account.name}"? Esta ação só é possível se a conta não tiver movimentos associados.`
+    );
+    if (!confirmed) return;
+
+    setError("");
+    try {
+      await deleteAccount(account.id);
+      setAccounts((current) => current.filter((item) => item.id !== account.id));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não consegui apagar a conta.");
+    }
+  }
+
   return (
     <AppShell onNewTransaction={() => setTransactionSheetOpen(true)}>
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -141,9 +157,14 @@ export default function AccountsPage() {
                 <p className="text-sm text-muted-foreground">{accountTypeLabel(account.type)}</p>
                 <h2 className="text-2xl font-bold">{account.name}</h2>
               </div>
-              <Button aria-label="Editar conta" size="icon" variant="ghost" onClick={() => openEdit(account)}>
-                <Pencil className="h-4 w-4" />
-              </Button>
+              <div className="flex gap-1">
+                <Button aria-label="Editar conta" size="icon" variant="ghost" onClick={() => openEdit(account)}>
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button aria-label="Apagar conta" size="icon" variant="ghost" onClick={() => remove(account)}>
+                  <Trash2 className="h-4 w-4 text-rose-500" />
+                </Button>
+              </div>
             </div>
             <strong className="text-3xl">{euros(Number(account.balance))}</strong>
           </Card>

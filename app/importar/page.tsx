@@ -308,16 +308,23 @@ export default function ImportPage() {
   }
 
   function confirmAsTransfer(row: PreviewRow) {
-    updateRow(row.id, {
-      type: "transfer",
-      category: "Transferência",
-      selected: true,
-      reason: "Transferência confirmada",
-      transferDecision: "confirmed",
-      learnedRule: false,
-      ruleId: undefined,
-      needsReview: false
-    });
+    setRows((current) =>
+      current.map((item) =>
+        item.id === row.id || item.id === row.linkedTransferId
+          ? {
+              ...item,
+              type: "transfer",
+              category: "Transferência",
+              selected: item.id === row.id ? true : false,
+              reason: item.id === row.id ? "Transferência confirmada" : "Ligada à transferência confirmada",
+              transferDecision: "confirmed",
+              learnedRule: false,
+              ruleId: undefined,
+              needsReview: false
+            }
+          : item
+      )
+    );
   }
 
   function keepAsNormalMovement(row: PreviewRow) {
@@ -353,7 +360,15 @@ export default function ImportPage() {
     setRows((current) =>
       current.map((item) =>
         item.id === row.id || item.id === row.linkedTransferId
-          ? { ...item, selected: false, reason: "Ignorada pelo utilizador", transferDecision: "ignored" }
+          ? {
+              ...item,
+              selected: false,
+              reason: "Ignorada pelo utilizador",
+              transferDecision: "ignored",
+              learnedRule: false,
+              ruleId: undefined,
+              needsReview: false
+            }
           : item
       )
     );
@@ -646,7 +661,7 @@ export default function ImportPage() {
 
             <Button
               className="mt-5 w-full"
-              disabled={!selectedRows.length || saving || needsMapping || selectedRows.some((row) => row.needsReview)}
+              disabled={!selectedRows.length || saving || needsMapping}
               size="lg"
               onClick={handleImport}
             >

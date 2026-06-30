@@ -9,7 +9,8 @@ export function euros(value: number) {
   return new Intl.NumberFormat("pt-PT", {
     style: "currency",
     currency: "EUR",
-    maximumFractionDigits: 0
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
   }).format(value || 0);
 }
 

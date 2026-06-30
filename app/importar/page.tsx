@@ -1373,9 +1373,32 @@ function suggestion(category: string, confidence: number, reason: string) {
 
 async function readTextFile(file: File) {
   const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  if (looksLikeUtf16(bytes)) {
+    return new TextDecoder("utf-16le").decode(buffer);
+  }
+
   const utf8 = new TextDecoder("utf-8").decode(buffer);
   if (!utf8.includes("\uFFFD")) return utf8;
   return new TextDecoder("windows-1252").decode(buffer);
+}
+
+function looksLikeUtf16(bytes: Uint8Array) {
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return true;
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) return false;
+
+  const sampleLength = Math.min(bytes.length, 1000);
+  if (sampleLength < 4) return false;
+
+  let oddNulls = 0;
+  let evenNulls = 0;
+  for (let index = 0; index < sampleLength; index += 1) {
+    if (bytes[index] !== 0) continue;
+    if (index % 2 === 0) evenNulls += 1;
+    else oddNulls += 1;
+  }
+
+  return oddNulls > sampleLength * 0.2 && oddNulls > evenNulls * 4;
 }
 
 function parseCsv(text: string) {
@@ -1424,11 +1447,8 @@ function parseCsv(text: string) {
   row.push(current.trim());
   if (row.some(Boolean)) rows.push(row);
 
-  const movementRecords = parseCsvMovementRows(rows);
-  if (movementRecords.length) return movementRecords;
-
   const headerIndex = findHeaderIndex(rows);
-  if (headerIndex < 0) return [];
+  if (headerIndex < 0) return parseCsvMovementRows(rows);
 
   const headers = rows[headerIndex].map((header, index) => header || `Coluna ${index + 1}`);
   return rows.slice(headerIndex + 1).map((values) =>

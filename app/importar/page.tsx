@@ -853,8 +853,11 @@ async function parseBankFile(file: File, account: Account): Promise<ImportFile> 
     throw new Error("Este importador aceita CSV e PDF do Millennium.");
   }
 
-  const records = parseCsv(await file.text());
+  const records = parseCsv(await readTextFile(file));
   const headers = Object.keys(records[0] || {});
+  if (!records.length || !headers.length) {
+    throw new Error("Não consegui encontrar colunas nesse CSV. Exporta em CSV normal ou usa o PDF do Millennium.");
+  }
   const mapping = detectMapping(headers);
 
   return {
@@ -1368,16 +1371,26 @@ function suggestion(category: string, confidence: number, reason: string) {
   return { category, confidence, reason };
 }
 
+async function readTextFile(file: File) {
+  const buffer = await file.arrayBuffer();
+  const utf8 = new TextDecoder("utf-8").decode(buffer);
+  if (!utf8.includes("\uFFFD")) return utf8;
+  return new TextDecoder("windows-1252").decode(buffer);
+}
+
 function parseCsv(text: string) {
-  const delimiter = detectDelimiter(text);
+  const cleanText = text.replace(/^\uFEFF/, "");
+  const explicitSeparator = cleanText.match(/^sep=(.)\s*$/im)?.[1];
+  const textWithoutSeparator = cleanText.replace(/^sep=.\s*\r?\n/i, "");
+  const delimiter = explicitSeparator || detectDelimiter(textWithoutSeparator);
   const rows: string[][] = [];
   let current = "";
   let row: string[] = [];
   let quoted = false;
 
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    const next = text[index + 1];
+  for (let index = 0; index < textWithoutSeparator.length; index += 1) {
+    const char = textWithoutSeparator[index];
+    const next = textWithoutSeparator[index + 1];
 
     if (char === '"' && quoted && next === '"') {
       current += '"';
@@ -1411,7 +1424,10 @@ function parseCsv(text: string) {
   row.push(current.trim());
   if (row.some(Boolean)) rows.push(row);
 
-  const headerIndex = rows.findIndex((candidate) => candidate.filter(Boolean).length >= 2);
+  const movementRecords = parseCsvMovementRows(rows);
+  if (movementRecords.length) return movementRecords;
+
+  const headerIndex = findHeaderIndex(rows);
   if (headerIndex < 0) return [];
 
   const headers = rows[headerIndex].map((header, index) => header || `Coluna ${index + 1}`);
@@ -1423,15 +1439,69 @@ function parseCsv(text: string) {
   );
 }
 
+function parseCsvMovementRows(rows: string[][]) {
+  const records: Record<string, string>[] = [];
+
+  rows.forEach((values) => {
+    const compact = values.map((value) => value.trim()).filter(Boolean);
+    if (compact.length < 3 || !parseDate(compact[0])) return;
+
+    const moneyIndexes = compact
+      .map((value, index) => ({ index, amount: parseMoney(value) }))
+      .filter((item) => item.index !== 0 && looksLikeMoney(compact[item.index]) && Number.isFinite(item.amount));
+
+    if (!moneyIndexes.length) return;
+
+    const amountItem = moneyIndexes.length >= 2 ? moneyIndexes[moneyIndexes.length - 2] : moneyIndexes[moneyIndexes.length - 1];
+    const balanceItem = moneyIndexes.length >= 2 ? moneyIndexes[moneyIndexes.length - 1] : null;
+    const description = compact
+      .filter((_, index) => index !== 0 && index !== amountItem.index && index !== balanceItem?.index)
+      .join(" ");
+
+    records.push({
+      Data: compact[0],
+      Descrição: description || "Movimento importado",
+      Valor: String(amountItem.amount),
+      Moeda: "EUR",
+      Saldo: balanceItem ? String(balanceItem.amount) : ""
+    });
+  });
+
+  return records.length >= 2 ? records : [];
+}
+
+function findHeaderIndex(rows: string[][]) {
+  const semanticIndex = rows.findIndex((candidate) => {
+    const normalized = candidate.map(normalizeValue).join(" ");
+    const hasDate = matchesAny(normalized, ["data", "date", "completed", "started"]);
+    const hasDescription = matchesAny(normalized, ["descricao", "descrição", "description", "descritivo", "merchant", "counterparty"]);
+    const hasAmount = matchesAny(normalized, ["valor", "montante", "amount", "debito", "débito", "credito", "crédito", "saldo"]);
+    return candidate.filter(Boolean).length >= 2 && hasDate && (hasDescription || hasAmount);
+  });
+
+  if (semanticIndex >= 0) return semanticIndex;
+
+  return rows.findIndex((candidate) => candidate.filter(Boolean).length >= 2);
+}
+
 function detectDelimiter(text: string) {
-  const firstLines = text.split(/\r?\n/).slice(0, 5).join("\n");
-  const candidates = [",", ";", "\t"];
+  const sample = text.split(/\r?\n/).slice(0, 50).join("\n");
+  const candidates = [",", ";", "\t", "|"];
   return candidates
     .map((candidate) => ({
       candidate,
-      count: (firstLines.match(new RegExp(candidate === "\t" ? "\\t" : `\\${candidate}`, "g")) || []).length
+      count: countDelimiter(sample, candidate)
     }))
     .sort((a, b) => b.count - a.count)[0]?.candidate || ",";
+}
+
+function countDelimiter(text: string, delimiter: string) {
+  return Array.from(text).filter((char) => char === delimiter).length;
+}
+
+function looksLikeMoney(value: string) {
+  const text = String(value || "").trim();
+  return /[-+€]|\bEUR\b/i.test(text) || /\d+[,.]\d{2}/.test(text);
 }
 
 function parseSignedAmount(record: Record<string, string>, mapping: ColumnMapping) {

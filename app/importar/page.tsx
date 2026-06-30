@@ -658,40 +658,42 @@ async function parseCsvFile(file: File, account: Account): Promise<ImportFile> {
 function rowsFromFile(file: ImportFile): PreviewRow[] {
   if (!isUsableMapping(file.mapping)) return [];
 
-  return file.records
-    .map((record, index) => {
-      const date = parseDate(readField(record, file.mapping.date));
-      const signedAmount = parseSignedAmount(record, file.mapping);
-      const description = cleanDescription(readField(record, file.mapping.description));
+  const parsedRows: PreviewRow[] = [];
 
-      if (!date || !description || !Number.isFinite(signedAmount) || signedAmount === 0) {
-        return null;
-      }
+  file.records.forEach((record, index) => {
+    const date = parseDate(readField(record, file.mapping.date));
+    const signedAmount = parseSignedAmount(record, file.mapping);
+    const description = cleanDescription(readField(record, file.mapping.description));
 
-      const suggestedType: CategoryType = signedAmount > 0 ? "income" : "expense";
-      const suggestion = suggestCategory(description, suggestedType);
+    if (!date || !description || !Number.isFinite(signedAmount) || signedAmount === 0) {
+      return;
+    }
 
-      return {
-        id: `${file.id}-${index}-${date}-${signedAmount}`,
-        fileId: file.id,
-        sourceRow: index,
-        selected: true,
-        duplicate: false,
-        importAnyway: false,
-        type: suggestedType,
-        suggestedType,
-        amount: Math.abs(roundMoney(signedAmount)),
-        signedAmount: roundMoney(signedAmount),
-        date,
-        description,
-        accountId: file.accountId,
-        accountName: file.accountName,
-        category: suggestion.category,
-        confidence: suggestion.confidence,
-        reason: suggestion.reason
-      };
-    })
-    .filter((row): row is PreviewRow => Boolean(row));
+    const suggestedType: CategoryType = signedAmount > 0 ? "income" : "expense";
+    const suggestion = suggestCategory(description, suggestedType);
+
+    parsedRows.push({
+      id: `${file.id}-${index}-${date}-${signedAmount}`,
+      fileId: file.id,
+      sourceRow: index,
+      selected: true,
+      duplicate: false,
+      importAnyway: false,
+      type: suggestedType,
+      suggestedType,
+      amount: Math.abs(roundMoney(signedAmount)),
+      signedAmount: roundMoney(signedAmount),
+      date,
+      description,
+      accountId: file.accountId,
+      accountName: file.accountName,
+      category: suggestion.category,
+      confidence: suggestion.confidence,
+      reason: suggestion.reason
+    });
+  });
+
+  return parsedRows;
 }
 
 function detectMapping(headers: string[]): ColumnMapping {

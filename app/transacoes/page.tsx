@@ -10,7 +10,14 @@ import { TransactionSheet } from "@/components/finance/transaction-sheet";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { deleteTransaction, deleteTransactionsForMonth, fetchAccounts, fetchCategories, fetchTransactions } from "@/lib/supabase/queries";
+import {
+  deleteTransaction,
+  deleteTransactionsForMonth,
+  fetchAccounts,
+  fetchCategories,
+  fetchTransactions,
+  saveTransaction
+} from "@/lib/supabase/queries";
 import type { Account, Category, Transaction, TransactionType } from "@/lib/types";
 import { monthKey, monthLabel } from "@/lib/utils";
 
@@ -68,6 +75,11 @@ function Transactions() {
       .filter((transaction) => {
         const text = `${transaction.description || ""} ${transaction.categories?.name || ""} ${transaction.accounts?.name || ""} ${transaction.from_account?.name || ""} ${transaction.to_account?.name || ""}`.toLowerCase();
         return text.includes(search.toLowerCase());
+      })
+      .sort((a, b) => {
+        const byDate = b.date.localeCompare(a.date);
+        if (byDate !== 0) return byDate;
+        return (b.created_at || "").localeCompare(a.created_at || "");
       });
   }, [accountId, categoryId, search, transactions, type]);
 
@@ -80,6 +92,38 @@ function Transactions() {
     if (!window.confirm("Queres apagar este movimento?")) return;
     await deleteTransaction(id);
     await load();
+  }
+
+  async function splitTransaction(transaction: Transaction) {
+    if (transaction.type === "transfer") return;
+    const nextAmount = Math.round((Number(transaction.amount || 0) / 2) * 100) / 100;
+    if (nextAmount <= 0) return;
+
+    const ok = window.confirm(
+      `Queres dividir "${transaction.description || "este movimento"}" por 2 e guardar apenas ${nextAmount.toLocaleString("pt-PT", {
+        style: "currency",
+        currency: "EUR"
+      })}?`
+    );
+    if (!ok) return;
+
+    setError("");
+    try {
+      await saveTransaction({
+        id: transaction.id,
+        type: transaction.type,
+        amount: nextAmount,
+        category_id: transaction.category_id,
+        account_id: transaction.account_id,
+        description: transaction.description || "Movimento",
+        date: transaction.date
+      });
+      setSuccess("Movimento dividido por 2.");
+      await load();
+      window.setTimeout(() => setSuccess(""), 3500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não consegui dividir este movimento.");
+    }
   }
 
   async function confirmDeleteMonth() {
@@ -183,6 +227,7 @@ function Transactions() {
           setSheetOpen(true);
         }}
         onDelete={remove}
+        onSplit={splitTransaction}
       />
 
       <TransactionSheet

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightLeft, Pencil, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Divide, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { Transaction } from "@/lib/types";
@@ -10,11 +10,13 @@ export function TransactionList({
   transactions,
   onEdit,
   onDelete,
+  onSplit,
   compact = false
 }: {
   transactions: Transaction[];
   onEdit?: (transaction: Transaction) => void;
   onDelete?: (id: string) => void;
+  onSplit?: (transaction: Transaction) => void;
   compact?: boolean;
 }) {
   if (!transactions.length) {
@@ -45,6 +47,7 @@ export function TransactionList({
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate font-semibold">{transaction.description || titleFor(transaction)}</p>
+            <p className="truncate text-xs text-muted-foreground">{formatTransactionDate(transaction.date)}</p>
             <p className="truncate text-xs text-muted-foreground">{detailFor(transaction)}</p>
           </div>
           <div className="shrink-0 text-right">
@@ -61,6 +64,12 @@ export function TransactionList({
             </p>
             {!compact && onEdit && onDelete ? (
               <div className="mt-1 flex justify-end gap-1">
+                {onSplit && transaction.type !== "transfer" ? (
+                  <Button aria-label="Dividir movimento por 2" size="sm" variant="ghost" onClick={() => onSplit(transaction)}>
+                    <Divide className="h-4 w-4" />
+                    1/2
+                  </Button>
+                ) : null}
                 <Button aria-label="Editar movimento" size="icon" variant="ghost" onClick={() => onEdit(transaction)}>
                   <Pencil className="h-4 w-4" />
                 </Button>
@@ -87,4 +96,12 @@ function detailFor(transaction: Transaction) {
   }
 
   return `${transaction.categories?.name || "Sem categoria"} · ${transaction.accounts?.name || "Sem conta"}`;
+}
+
+function formatTransactionDate(date: string) {
+  return new Intl.DateTimeFormat("pt-PT", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric"
+  }).format(new Date(`${date}T00:00:00`));
 }

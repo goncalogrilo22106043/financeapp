@@ -9,8 +9,8 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { expenseCategories, incomeCategories } from "@/lib/constants";
-import { fetchAccounts, fetchAllTransactions, importTransactions } from "@/lib/supabase/queries";
-import type { Account, CategoryType, Transaction, TransactionType } from "@/lib/types";
+import { fetchAccounts, fetchAllTransactions, fetchCategories, importTransactions } from "@/lib/supabase/queries";
+import type { Account, Category, CategoryType, Transaction, TransactionType } from "@/lib/types";
 import { cn, euros } from "@/lib/utils";
 
 type ColumnMapping = {
@@ -64,6 +64,11 @@ type ImportResult = {
   skipped: number;
 };
 
+type CategoryOptions = {
+  income: string[];
+  expense: string[];
+};
+
 type PdfTextItem = {
   str: string;
   transform: number[];
@@ -107,6 +112,7 @@ const standardMapping: ColumnMapping = {
 
 export default function ImportPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [existingTransactions, setExistingTransactions] = useState<Transaction[]>([]);
   const [files, setFiles] = useState<ImportFile[]>([]);
@@ -121,11 +127,13 @@ export default function ImportPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [accountRows, transactionRows] = await Promise.all([
+        const [accountRows, transactionRows, categoryRows] = await Promise.all([
           fetchAccounts(),
-          fetchAllTransactions()
+          fetchAllTransactions(),
+          fetchCategories()
         ]);
         setAccounts(accountRows);
+        setCategories(categoryRows);
         setExistingTransactions(transactionRows);
         setSelectedAccountId(accountRows[0]?.id || "");
       } catch (err) {
@@ -173,6 +181,13 @@ export default function ImportPage() {
   );
   const needsMapping = files.some((file) => file.needsMapping);
   const activeStep = rows.length ? (selectedTransfers.length ? 2 : 1) : 0;
+  const categoryOptions = useMemo(
+    () => ({
+      income: categoryNamesForType(categories, "income"),
+      expense: categoryNamesForType(categories, "expense")
+    }),
+    [categories]
+  );
 
   async function handleFiles(event: ChangeEvent<HTMLInputElement>) {
     const pickedFiles = Array.from(event.target.files || []);
@@ -231,7 +246,7 @@ export default function ImportPage() {
   }
 
   function rebuildRows(sourceFiles = files) {
-    const parsedRows = sourceFiles.flatMap(rowsFromFile);
+    const parsedRows = sourceFiles.flatMap((file) => rowsFromFile(file, categoryOptions));
     const withDuplicates = markDuplicates(parsedRows, existingTransactions);
     setRows(detectInternalTransfers(withDuplicates));
   }
@@ -275,7 +290,7 @@ export default function ImportPage() {
         if (item.id !== row.id && item.id !== row.linkedTransferId) return item;
 
         const type = item.signedAmount >= 0 ? "income" : "expense";
-        const suggestion = suggestCategory(item.description, type);
+        const suggestion = suggestCategory(item.description, type, categoryOptions);
 
         return {
           ...item,
@@ -529,7 +544,12 @@ export default function ImportPage() {
               ) : null}
 
               {rows.map((row) => (
-                <PreviewItem key={row.id} row={row} onUpdate={updateRow} />
+                <PreviewItem
+                  categoryOptions={categoryOptions}
+                  key={row.id}
+                  row={row}
+                  onUpdate={updateRow}
+                />
               ))}
             </div>
 
@@ -695,13 +715,15 @@ function TransferReview({
 }
 
 function PreviewItem({
+  categoryOptions,
   row,
   onUpdate
 }: {
+  categoryOptions: CategoryOptions;
   row: PreviewRow;
   onUpdate: (id: string, updates: Partial<PreviewRow>) => void;
 }) {
-  const categories = row.type === "income" ? incomeCategories : expenseCategories;
+  const categories = row.type === "income" ? categoryOptions.income : categoryOptions.expense;
   const isTransferCounterpart = Boolean(row.type === "transfer" && !row.selected && row.linkedTransferId);
 
   return (
@@ -778,7 +800,7 @@ function PreviewItem({
               onChange={(event) =>
                 onUpdate(row.id, {
                   type: event.target.value as TransactionType,
-                  category: "Outros",
+                  category: defaultCategoryForType(event.target.value as TransactionType, categoryOptions),
                   selected: row.duplicate ? row.importAnyway : row.selected
                 })
               }
@@ -872,7 +894,7 @@ async function parseBankFile(file: File, account: Account): Promise<ImportFile> 
   };
 }
 
-function rowsFromFile(file: ImportFile): PreviewRow[] {
+function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions): PreviewRow[] {
   if (!isUsableMapping(file.mapping)) return [];
 
   const parsedRows: PreviewRow[] = [];
@@ -887,7 +909,7 @@ function rowsFromFile(file: ImportFile): PreviewRow[] {
     }
 
     const suggestedType: CategoryType = signedAmount > 0 ? "income" : "expense";
-    const suggestion = suggestCategory(description, suggestedType);
+    const suggestion = suggestCategory(description, suggestedType, categoryOptions);
     const transferSuggestion = suggestStandaloneTransfer(file.accountName, description, signedAmount);
 
     parsedRows.push({
@@ -1331,50 +1353,82 @@ function detectInternalTransfers(rows: PreviewRow[]) {
   return next;
 }
 
-function suggestCategory(description: string, type: CategoryType) {
+function suggestCategory(description: string, type: CategoryType, categoryOptions: CategoryOptions) {
   const text = normalizeValue(description);
+  const pick = (category: string, confidence: number, reason: string) =>
+    suggestion(resolveCategoryName(category, type, categoryOptions), confidence, reason);
 
   if (type === "income") {
-    if (matchesAny(text, ["vinted"])) return suggestion("Vinted", 92, "Vinted");
-    if (matchesAny(text, ["cgsneakers", "cg sneakers"])) return suggestion("CGSneakers", 92, "CGSneakers");
-    if (matchesAny(text, ["salario", "salário", "vencimento", "ordenado"])) return suggestion("Salário", 90, "Salário");
-    if (matchesAny(text, ["dividendo", "juros", "investimento"])) return suggestion("Investimentos", 86, "Investimentos");
-    if (matchesAny(text, ["refund", "reembolso", "devolucao", "devolução"])) return suggestion("Reembolsos", 88, "Reembolso");
-    if (matchesAny(text, ["video", "videografia", "film", "fotografia"])) return suggestion("Videografia", 82, "Videografia");
-    return suggestion("Outros", 70, "Receita detetada");
+    if (matchesAny(text, ["vinted"])) return pick("Vinted", 92, "Vinted");
+    if (matchesAny(text, ["cgsneakers", "cg sneakers"])) return pick("CGSneakers", 92, "CGSneakers");
+    if (matchesAny(text, ["salario", "salário", "vencimento", "ordenado"])) return pick("Salário", 90, "Salário");
+    if (matchesAny(text, ["dividendo", "juros", "investimento"])) return pick("Investimentos", 86, "Investimentos");
+    if (matchesAny(text, ["refund", "reembolso", "devolucao", "devolução"])) return pick("Reembolsos", 88, "Reembolso");
+    if (matchesAny(text, ["video", "videografia", "film", "fotografia"])) return pick("Videografia", 82, "Videografia");
+    return pick("Outros", 70, "Receita detetada");
   }
 
   if (matchesAny(text, ["spotify", "netflix", "apple", "adobe", "google", "openai", "notion"])) {
-    return suggestion("Subscrições", 90, "Subscrição");
+    return pick("Subscrições", 90, "Subscrição");
   }
   if (matchesAny(text, ["galp", "repsol", "bp ", "cepsa", "prio", "combustivel", "combustível"])) {
-    return suggestion("Combustível", 90, "Combustível");
+    return pick("Combustível", 90, "Combustível");
   }
-  if (matchesAny(text, ["portagem", "via verde", "brisa"])) return suggestion("Portagens", 90, "Portagens");
+  if (matchesAny(text, ["portagem", "via verde", "brisa"])) return pick("Portagens", 90, "Portagens");
   if (matchesAny(text, ["uber", "bolt", "cp ", "metro", "autocarro", "train", "bus"])) {
-    return suggestion("Transporte", 84, "Transporte");
+    return pick("Transporte", 84, "Transporte");
   }
   if (matchesAny(text, ["continente", "pingo doce", "lidl", "auchan", "mercadona", "intermarche"])) {
-    return suggestion("Alimentação", 92, "Alimentação");
+    return pick("Alimentação", 92, "Alimentação");
   }
   if (matchesAny(text, ["amazon", "worten", "fnac", "pcdiga", "radio popular"])) {
-    return suggestion("Equipamento", 78, "Loja de equipamento");
+    return pick("Equipamento", 78, "Loja de equipamento");
   }
   if (matchesAny(text, ["ginásio", "ginasio", "fitness", "holmes place", "solinca"])) {
-    return suggestion("Ginásio", 88, "Ginásio");
+    return pick("Ginásio", 88, "Ginásio");
   }
   if (matchesAny(text, ["farmacia", "farmácia", "hospital", "clinica", "clínica", "barbearia"])) {
-    return suggestion("Saúde / cuidados pessoais", 86, "Cuidados pessoais");
+    return pick("Saúde / cuidados pessoais", 86, "Cuidados pessoais");
   }
   if (matchesAny(text, ["meta", "facebook", "instagram ads", "google ads", "tiktok ads"])) {
-    return suggestion("Marketing", 86, "Marketing");
+    return pick("Marketing", 86, "Marketing");
   }
 
-  return suggestion("Outros", 68, "Despesa detetada");
+  return pick("Outros", 68, "Despesa detetada");
 }
 
 function suggestion(category: string, confidence: number, reason: string) {
   return { category, confidence, reason };
+}
+
+function categoryNamesForType(categories: Category[], type: CategoryType) {
+  const fromSupabase = categories
+    .filter((category) => category.type === type)
+    .map((category) => category.name)
+    .filter(Boolean);
+
+  if (fromSupabase.length) return fromSupabase;
+  return type === "income" ? [...incomeCategories] : [...expenseCategories];
+}
+
+function resolveCategoryName(category: string, type: CategoryType, categoryOptions: CategoryOptions) {
+  const options = type === "income" ? categoryOptions.income : categoryOptions.expense;
+  const existing = options.find(
+    (option) => normalizeValue(option) === normalizeValue(category)
+  );
+
+  if (existing) return existing;
+
+  return (
+    options.find((option) => normalizeValue(option) === "outros") ||
+    options[0] ||
+    "Outros"
+  );
+}
+
+function defaultCategoryForType(type: TransactionType, categoryOptions: CategoryOptions) {
+  if (type === "transfer") return "Transferência";
+  return resolveCategoryName("Outros", type, categoryOptions);
 }
 
 async function readTextFile(file: File) {

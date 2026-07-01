@@ -908,8 +908,8 @@ function PreviewItem({
             <strong
               className={cn(
                 "shrink-0 whitespace-nowrap",
-                row.type === "income" && "text-emerald-600",
-                row.type === "expense" && "text-rose-600",
+                row.signedAmount > 0 && "text-emerald-600",
+                row.signedAmount < 0 && "text-rose-600",
                 row.type === "transfer" && "text-sky-600"
               )}
             >
@@ -1603,6 +1603,9 @@ function applyLearnedRule(
   if (type === "transfer" && !isReliableInternalTransferDescription(description)) {
     return null;
   }
+  if (type !== "transfer" && !isRuleCompatibleWithAmount(type, signedAmount)) {
+    return null;
+  }
 
   const category = type === "transfer"
     ? "Transferência"
@@ -1623,6 +1626,18 @@ function applyLearnedRule(
     fromAccountName: transfer?.fromAccountName,
     toAccountName: transfer?.toAccountName
   };
+}
+
+function isRuleCompatibleWithAmount(type: TransactionType, signedAmount: number) {
+  if (signedAmount < 0) {
+    return type === "expense" || type === "investment" || type === "reimbursable";
+  }
+
+  if (signedAmount > 0) {
+    return type === "income" || type === "third_party";
+  }
+
+  return false;
 }
 
 function findBestRule(description: string, rules: TransactionRule[]) {

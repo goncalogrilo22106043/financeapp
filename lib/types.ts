@@ -1,4 +1,4 @@
-export type TransactionType = "income" | "expense" | "transfer";
+export type TransactionType = "income" | "expense" | "transfer" | "third_party" | "investment" | "reimbursable";
 export type CategoryType = "income" | "expense";
 export type AccountType = "bank" | "wallet" | "cash" | "other";
 
@@ -36,6 +36,7 @@ export type Transaction = {
   from_account_id: string | null;
   to_account_id: string | null;
   description: string | null;
+  include_in_monthly_summary: boolean;
   date: string;
   created_at: string;
   updated_at?: string;
@@ -51,6 +52,7 @@ export type TransactionRule = {
   merchant_pattern: string;
   transaction_type: TransactionType;
   category_id: string | null;
+  include_in_monthly_summary: boolean;
   confidence: number;
   created_at: string;
   categories?: Pick<Category, "id" | "name" | "type"> | null;
@@ -71,4 +73,10 @@ export type FinanceSummary = {
   balance: number;
   savingsRate: number;
   netWorth: number;
+  ignored: {
+    transfers: number;
+    thirdParty: number;
+    investments: number;
+    reimbursable: number;
+  };
 };

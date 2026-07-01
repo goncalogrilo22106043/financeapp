@@ -36,19 +36,20 @@ create table public.categories (
 create table public.transactions (
   id uuid primary key default gen_random_uuid(),
   user_id text not null default 'main' references public.profiles(id) on delete cascade,
-  type text not null check (type in ('income', 'expense', 'transfer')),
+  type text not null check (type in ('income', 'expense', 'transfer', 'third_party', 'investment', 'reimbursable')),
   amount numeric(12, 2) not null check (amount >= 0),
   category_id uuid constraint transactions_category_id_fkey references public.categories(id) on delete set null,
   account_id uuid constraint transactions_account_id_fkey references public.accounts(id) on delete set null,
   from_account_id uuid constraint transactions_from_account_id_fkey references public.accounts(id) on delete set null,
   to_account_id uuid constraint transactions_to_account_id_fkey references public.accounts(id) on delete set null,
   description text,
+  include_in_monthly_summary boolean not null default true,
   date date not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint transaction_shape check (
     (
-      type in ('income', 'expense')
+      type in ('income', 'expense', 'third_party', 'investment', 'reimbursable')
       and account_id is not null
       and from_account_id is null
       and to_account_id is null
@@ -69,8 +70,9 @@ create table public.transaction_rules (
   id uuid primary key default gen_random_uuid(),
   user_id text not null default 'main' references public.profiles(id) on delete cascade,
   merchant_pattern text not null,
-  transaction_type text not null check (transaction_type in ('income', 'expense', 'transfer')),
+  transaction_type text not null check (transaction_type in ('income', 'expense', 'transfer', 'third_party', 'investment', 'reimbursable')),
   category_id uuid references public.categories(id) on delete set null,
+  include_in_monthly_summary boolean not null default true,
   confidence integer not null default 96 check (confidence >= 0 and confidence <= 100),
   created_at timestamptz not null default now(),
   unique (user_id, merchant_pattern)

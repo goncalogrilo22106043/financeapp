@@ -33,6 +33,7 @@ function Transactions() {
   const [type, setType] = useState<"all" | TransactionType>("all");
   const [categoryId, setCategoryId] = useState("all");
   const [accountId, setAccountId] = useState("all");
+  const [summaryFilter, setSummaryFilter] = useState<"all" | "included" | "excluded">("all");
   const [search, setSearch] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
@@ -65,6 +66,11 @@ function Transactions() {
     return dedupeInternalTransfers(transactions)
       .filter((transaction) => type === "all" || transaction.type === type)
       .filter((transaction) => categoryId === "all" || transaction.category_id === categoryId)
+      .filter((transaction) => {
+        if (summaryFilter === "included") return transaction.include_in_monthly_summary !== false;
+        if (summaryFilter === "excluded") return transaction.include_in_monthly_summary === false;
+        return true;
+      })
       .filter(
         (transaction) =>
           accountId === "all" ||
@@ -81,7 +87,7 @@ function Transactions() {
         if (byDate !== 0) return byDate;
         return (b.created_at || "").localeCompare(a.created_at || "");
       });
-  }, [accountId, categoryId, search, transactions, type]);
+  }, [accountId, categoryId, search, summaryFilter, transactions, type]);
   const duplicateTransferIds = useMemo(
     () => findDuplicateInternalTransferIds(transactions),
     [transactions]
@@ -119,6 +125,9 @@ function Transactions() {
         amount: nextAmount,
         category_id: transaction.category_id,
         account_id: transaction.account_id,
+        from_account_id: transaction.from_account_id,
+        to_account_id: transaction.to_account_id,
+        include_in_monthly_summary: transaction.include_in_monthly_summary !== false,
         description: transaction.description || "Movimento",
         date: transaction.date
       });
@@ -127,6 +136,27 @@ function Transactions() {
       window.setTimeout(() => setSuccess(""), 3500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não consegui dividir este movimento.");
+    }
+  }
+
+  async function toggleSummary(transaction: Transaction) {
+    setError("");
+    try {
+      await saveTransaction({
+        id: transaction.id,
+        type: transaction.type,
+        amount: Number(transaction.amount || 0),
+        category_id: transaction.category_id,
+        account_id: transaction.account_id,
+        from_account_id: transaction.from_account_id,
+        to_account_id: transaction.to_account_id,
+        include_in_monthly_summary: transaction.include_in_monthly_summary === false,
+        description: transaction.description || "Movimento",
+        date: transaction.date
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não consegui alterar este movimento.");
     }
   }
 
@@ -202,7 +232,7 @@ function Transactions() {
         <MonthPicker month={month} onChange={setMonth} />
       </div>
 
-      <div className="mb-4 grid gap-2 md:grid-cols-[1fr_150px_180px_220px]">
+      <div className="mb-4 grid gap-2 md:grid-cols-[1fr_150px_180px_220px_190px]">
         <Input
           placeholder="Pesquisar descrição"
           value={search}
@@ -213,6 +243,9 @@ function Transactions() {
           <option value="income">Receitas</option>
           <option value="expense">Despesas</option>
           <option value="transfer">Transferências</option>
+          <option value="third_party">Terceiros</option>
+          <option value="investment">Investimentos</option>
+          <option value="reimbursable">Reembolsáveis</option>
         </Select>
         <Select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
           <option value="all">Todas as contas</option>
@@ -229,6 +262,11 @@ function Transactions() {
               {category.name}
             </option>
           ))}
+        </Select>
+        <Select value={summaryFilter} onChange={(event) => setSummaryFilter(event.target.value as typeof summaryFilter)}>
+          <option value="all">Resumo: todos</option>
+          <option value="included">Incluídos</option>
+          <option value="excluded">Fora do resumo</option>
         </Select>
       </div>
 
@@ -264,6 +302,7 @@ function Transactions() {
         }}
         onDelete={remove}
         onSplit={splitTransaction}
+        onToggleSummary={toggleSummary}
       />
 
       <TransactionSheet

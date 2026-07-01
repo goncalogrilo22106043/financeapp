@@ -7,7 +7,7 @@ export function SummaryCards({ summary }: { summary: FinanceSummary }) {
   return (
     <section className="grid gap-3">
       <Card className="overflow-hidden bg-foreground p-6 text-background">
-        <p className="text-sm text-background/70">Saldo do mês</p>
+        <p className="text-sm text-background/70">Poupança do mês</p>
         <strong className="mt-3 block text-4xl font-bold tracking-tight">{euros(summary.balance)}</strong>
         <p className="mt-3 text-sm text-background/70">
           Receitas reais menos despesas reais. Transferências ficam fora.
@@ -15,12 +15,32 @@ export function SummaryCards({ summary }: { summary: FinanceSummary }) {
       </Card>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <MiniMetric icon={ArrowUpRight} label="Receitas" value={euros(summary.income)} tone="green" />
-        <MiniMetric icon={ArrowDownRight} label="Despesas" value={euros(summary.expenses)} tone="red" />
-        <MiniMetric icon={Percent} label="Poupança" value={`${summary.savingsRate}%`} tone="blue" />
+        <MiniMetric icon={ArrowUpRight} label="Receitas reais" value={euros(summary.income)} tone="green" />
+        <MiniMetric icon={ArrowDownRight} label="Despesas pessoais" value={euros(summary.expenses)} tone="red" />
+        <MiniMetric icon={Percent} label="Taxa de poupança" value={`${summary.savingsRate}%`} tone="blue" />
         <MiniMetric icon={WalletCards} label="Património" value={euros(summary.netWorth)} tone="slate" />
       </div>
+      <Card className="p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Movimentos ignorados no resumo
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+          <IgnoredMetric label="Transferências" value={summary.ignored.transfers} />
+          <IgnoredMetric label="Dinheiro de terceiros" value={summary.ignored.thirdParty} />
+          <IgnoredMetric label="Investimentos" value={summary.ignored.investments} />
+          <IgnoredMetric label="Reembolsáveis" value={summary.ignored.reimbursable} />
+        </div>
+      </Card>
     </section>
+  );
+}
+
+function IgnoredMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <p className="text-muted-foreground">{label}</p>
+      <strong className="mt-1 block">{euros(value)}</strong>
+    </div>
   );
 }
 

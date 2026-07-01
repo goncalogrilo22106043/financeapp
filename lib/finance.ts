@@ -1,4 +1,4 @@
-import type { Account, CategoryType, FinanceSummary, Transaction } from "@/lib/types";
+import type { Account, CategoryType, FinanceSummary, Transaction, TransactionType } from "@/lib/types";
 
 export function getMonthRange(month: string) {
   const [year, monthIndex] = month.split("-").map(Number);
@@ -27,14 +27,20 @@ export function summarize(transactions: Transaction[], accounts: Account[] = [])
     expenses,
     balance,
     savingsRate: income > 0 ? Math.round((balance / income) * 100) : 0,
-    netWorth: accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0)
+    netWorth: accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0),
+    ignored: {
+      transfers: sumIgnoredByType(transactions, "transfer"),
+      thirdParty: sumIgnoredByType(transactions, "third_party"),
+      investments: sumIgnoredByType(transactions, "investment"),
+      reimbursable: sumIgnoredByType(transactions, "reimbursable")
+    }
   };
 }
 
 export function sumByType(transactions: Transaction[], type: CategoryType) {
   return transactions
     .filter((transaction) => transaction.type === type)
-    .filter((transaction) => !(type === "income" && isReimbursement(transaction)))
+    .filter(isIncludedInMonthlySummary)
     .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
 }
 
@@ -42,7 +48,7 @@ export function totalsByCategory(transactions: Transaction[], type: CategoryType
   const grouped = new Map<string, number>();
   transactions
     .filter((transaction) => transaction.type === type)
-    .filter((transaction) => !(type === "income" && isReimbursement(transaction)))
+    .filter(isIncludedInMonthlySummary)
     .forEach((transaction) => {
       const category = transaction.categories?.name || "Sem categoria";
       grouped.set(category, (grouped.get(category) || 0) + Number(transaction.amount || 0));
@@ -57,7 +63,7 @@ export function totalsByAccount(transactions: Transaction[], type: "expense" | "
   const grouped = new Map<string, number>();
   transactions
     .filter((transaction) => transaction.type === type)
-    .filter((transaction) => !(type === "income" && isReimbursement(transaction)))
+    .filter(isIncludedInMonthlySummary)
     .forEach((transaction) => {
       const account = transaction.accounts?.name || "Sem conta";
       grouped.set(account, (grouped.get(account) || 0) + Number(transaction.amount || 0));
@@ -68,14 +74,18 @@ export function totalsByAccount(transactions: Transaction[], type: "expense" | "
   );
 }
 
-export function isReimbursement(transaction: Transaction) {
-  return normalizeFinanceLabel(transaction.categories?.name || "") === "reembolsos";
+export function isIncludedInMonthlySummary(transaction: Transaction) {
+  return transaction.include_in_monthly_summary !== false && (
+    transaction.type === "income" || transaction.type === "expense"
+  );
 }
 
-function normalizeFinanceLabel(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
+export function defaultIncludeInMonthlySummary(type: TransactionType) {
+  return type === "income" || type === "expense";
+}
+
+function sumIgnoredByType(transactions: Transaction[], type: TransactionType) {
+  return transactions
+    .filter((transaction) => transaction.type === type)
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
 }

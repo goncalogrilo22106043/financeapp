@@ -4,12 +4,12 @@ export const incomeCategories = [
   "Vinted",
   "Salário",
   "Investimentos",
-  "Reembolsos",
   "Outros"
 ] as const;
 
 export const expenseCategories = [
   "Alimentação",
+  "Restaurantes",
   "Transporte",
   "Combustível",
   "Portagens",
@@ -17,9 +17,11 @@ export const expenseCategories = [
   "Equipamento",
   "Marketing",
   "Ginásio",
+  "Transportes",
   "Compras pessoais",
   "Saúde / cuidados pessoais",
   "Casa",
+  "Lazer",
   "Outros"
 ] as const;
 

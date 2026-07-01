@@ -11,12 +11,14 @@ export function TransactionList({
   onEdit,
   onDelete,
   onSplit,
+  onToggleSummary,
   compact = false
 }: {
   transactions: Transaction[];
   onEdit?: (transaction: Transaction) => void;
   onDelete?: (id: string) => void;
   onSplit?: (transaction: Transaction) => void;
+  onToggleSummary?: (transaction: Transaction) => void;
   compact?: boolean;
 }) {
   if (!transactions.length) {
@@ -40,7 +42,10 @@ export function TransactionList({
               "grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-lg font-bold",
               transaction.type === "income" && "bg-emerald-500/10 text-emerald-600",
               transaction.type === "expense" && "bg-rose-500/10 text-rose-600",
-              transaction.type === "transfer" && "bg-sky-500/10 text-sky-600"
+              transaction.type === "transfer" && "bg-sky-500/10 text-sky-600",
+              transaction.type === "third_party" && "bg-slate-500/10 text-slate-500",
+              transaction.type === "investment" && "bg-violet-500/10 text-violet-500",
+              transaction.type === "reimbursable" && "bg-amber-500/10 text-amber-600"
             )}
           >
             {transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : <ArrowRightLeft className="h-5 w-5" />}
@@ -49,6 +54,11 @@ export function TransactionList({
             <p className="truncate font-semibold">{transaction.description || titleFor(transaction)}</p>
             <p className="truncate text-xs text-muted-foreground">{formatTransactionDate(transaction.date)}</p>
             <p className="truncate text-xs text-muted-foreground">{detailFor(transaction)}</p>
+            {!compact ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {typeLabel(transaction.type)} · {transaction.include_in_monthly_summary === false ? "Fora do resumo mensal" : "Incluído no resumo mensal"}
+              </p>
+            ) : null}
           </div>
           <div className="shrink-0 text-right">
             <p
@@ -56,7 +66,10 @@ export function TransactionList({
                 "font-bold",
                 transaction.type === "income" && "text-emerald-600",
                 transaction.type === "expense" && "text-rose-600",
-                transaction.type === "transfer" && "text-sky-600"
+                transaction.type === "transfer" && "text-sky-600",
+                transaction.type === "third_party" && "text-slate-500",
+                transaction.type === "investment" && "text-violet-500",
+                transaction.type === "reimbursable" && "text-amber-600"
               )}
             >
               {transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}
@@ -64,6 +77,16 @@ export function TransactionList({
             </p>
             {!compact && onEdit && onDelete ? (
               <div className="mt-1 flex justify-end gap-1">
+                {onToggleSummary && transaction.type !== "transfer" ? (
+                  <Button
+                    aria-label="Alternar resumo mensal"
+                    size="sm"
+                    variant={transaction.include_in_monthly_summary === false ? "secondary" : "ghost"}
+                    onClick={() => onToggleSummary(transaction)}
+                  >
+                    Resumo
+                  </Button>
+                ) : null}
                 {onSplit && transaction.type !== "transfer" ? (
                   <Button aria-label="Dividir movimento por 2" size="sm" variant="ghost" onClick={() => onSplit(transaction)}>
                     <Divide className="h-4 w-4" />
@@ -88,6 +111,18 @@ export function TransactionList({
 function titleFor(transaction: Transaction) {
   if (transaction.type === "transfer") return "Transferência";
   return transaction.categories?.name || "Sem categoria";
+}
+
+export function typeLabel(type: Transaction["type"]) {
+  const labels = {
+    income: "Receita",
+    expense: "Despesa",
+    transfer: "Transferência",
+    third_party: "Dinheiro de terceiros",
+    investment: "Investimento",
+    reimbursable: "Reembolsável"
+  };
+  return labels[type];
 }
 
 function detailFor(transaction: Transaction) {

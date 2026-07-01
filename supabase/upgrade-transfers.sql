@@ -41,7 +41,19 @@ on conflict (user_id, name) do nothing;
 alter table public.transactions add column if not exists account_id uuid;
 alter table public.transactions add column if not exists from_account_id uuid;
 alter table public.transactions add column if not exists to_account_id uuid;
+alter table public.transactions add column if not exists include_in_monthly_summary boolean;
 alter table public.transactions add column if not exists updated_at timestamptz default now();
+
+update public.transactions
+set include_in_monthly_summary = case
+  when type in ('income', 'expense') then true
+  else false
+end
+where include_in_monthly_summary is null;
+
+alter table public.transactions
+  alter column include_in_monthly_summary set default true,
+  alter column include_in_monthly_summary set not null;
 
 update public.transactions
 set account_id = (
@@ -69,7 +81,7 @@ end $$;
 
 alter table public.transactions
   add constraint transactions_type_check
-  check (type in ('income', 'expense', 'transfer'));
+  check (type in ('income', 'expense', 'transfer', 'third_party', 'investment', 'reimbursable'));
 
 do $$
 begin
@@ -78,7 +90,7 @@ begin
   alter table public.transactions
     add constraint transaction_shape check (
       (
-        type in ('income', 'expense')
+        type in ('income', 'expense', 'third_party', 'investment', 'reimbursable')
         and account_id is not null
         and from_account_id is null
         and to_account_id is null
@@ -149,8 +161,9 @@ create table if not exists public.transaction_rules (
   id uuid primary key default gen_random_uuid(),
   user_id text not null default 'main' references public.profiles(id) on delete cascade,
   merchant_pattern text not null,
-  transaction_type text not null check (transaction_type in ('income', 'expense', 'transfer')),
+  transaction_type text not null check (transaction_type in ('income', 'expense', 'transfer', 'third_party', 'investment', 'reimbursable')),
   category_id uuid references public.categories(id) on delete set null,
+  include_in_monthly_summary boolean not null default true,
   confidence integer not null default 96 check (confidence >= 0 and confidence <= 100),
   created_at timestamptz not null default now()
 );
@@ -165,6 +178,26 @@ begin
     alter table public.transaction_rules add constraint transaction_rules_user_id_merchant_pattern_key unique (user_id, merchant_pattern);
   end if;
 end $$;
+
+alter table public.transaction_rules add column if not exists include_in_monthly_summary boolean;
+
+update public.transaction_rules
+set include_in_monthly_summary = case
+  when transaction_type in ('income', 'expense') then true
+  else false
+end
+where include_in_monthly_summary is null;
+
+alter table public.transaction_rules
+  alter column include_in_monthly_summary set default true,
+  alter column include_in_monthly_summary set not null;
+
+alter table public.transaction_rules
+  drop constraint if exists transaction_rules_transaction_type_check;
+
+alter table public.transaction_rules
+  add constraint transaction_rules_transaction_type_check
+  check (transaction_type in ('income', 'expense', 'transfer', 'third_party', 'investment', 'reimbursable'));
 
 alter table public.transaction_rules enable row level security;
 

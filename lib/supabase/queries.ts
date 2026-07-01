@@ -1,7 +1,7 @@
 "use client";
 
 import { defaultAccounts, expenseCategories, incomeCategories } from "@/lib/constants";
-import { getMonthRange } from "@/lib/finance";
+import { defaultIncludeInMonthlySummary, getMonthRange } from "@/lib/finance";
 import { getSupabase } from "@/lib/supabase/client";
 import type { Account, AccountType, Category, CategoryType, Goal, Transaction, TransactionRule, TransactionType } from "@/lib/types";
 
@@ -16,6 +16,7 @@ type TransactionInput = {
   from_account_id?: string | null;
   to_account_id?: string | null;
   description: string;
+  include_in_monthly_summary?: boolean;
   date: string;
 };
 
@@ -52,18 +53,25 @@ async function ensureDefaults() {
     .eq("user_id", sharedUserId);
 
   if (categoriesError) throw categoriesError;
-  if (categories?.length) return;
-
   const defaults = [
     ...incomeCategories.map((name) => ({ name, type: "income" as CategoryType })),
     ...expenseCategories.map((name) => ({ name, type: "expense" as CategoryType }))
   ];
+  const missingDefaults = defaults.filter((defaultCategory) =>
+    !categories?.some((category) =>
+      category.type === defaultCategory.type &&
+      category.name.localeCompare(defaultCategory.name, "pt-PT", { sensitivity: "accent" }) === 0
+    )
+  );
 
-  const { error } = await supabase.from("categories").insert(
-    defaults.map((category) => ({
+  if (!missingDefaults.length) return;
+
+  const { error } = await supabase.from("categories").upsert(
+    missingDefaults.map((category) => ({
       ...category,
       user_id: sharedUserId
-    }))
+    })),
+    { onConflict: "user_id,name,type" }
   );
   if (error) throw error;
 }
@@ -178,6 +186,7 @@ export async function saveTransactionRules(
     merchant_pattern: string;
     transaction_type: TransactionType;
     category?: string | null;
+    include_in_monthly_summary?: boolean;
     confidence?: number;
   }>
 ) {
@@ -189,17 +198,19 @@ export async function saveTransactionRules(
     merchant_pattern: string;
     transaction_type: TransactionType;
     category_id: string | null;
+    include_in_monthly_summary: boolean;
     confidence: number;
   }> = rules
     .map((rule) => {
       const pattern = rule.merchant_pattern.trim();
       if (!pattern) return null;
 
+      const categoryType = categoryTypeForTransaction(rule.transaction_type);
       const category = rule.transaction_type === "transfer"
         ? null
         : categories.find(
             (item) =>
-              item.type === rule.transaction_type &&
+              item.type === categoryType &&
               item.name.localeCompare(rule.category || "", "pt-PT", { sensitivity: "accent" }) === 0
           );
 
@@ -208,6 +219,7 @@ export async function saveTransactionRules(
         merchant_pattern: pattern,
         transaction_type: rule.transaction_type,
         category_id: category?.id || null,
+        include_in_monthly_summary: rule.include_in_monthly_summary ?? defaultIncludeInMonthlySummary(rule.transaction_type),
         confidence: Math.max(50, Math.min(100, Math.round(rule.confidence || 96)))
       };
     })
@@ -216,6 +228,7 @@ export async function saveTransactionRules(
       merchant_pattern: string;
       transaction_type: TransactionType;
       category_id: string | null;
+      include_in_monthly_summary: boolean;
       confidence: number;
     } => Boolean(rule));
 
@@ -255,6 +268,10 @@ async function getOrCreateCategory(name: string, type: CategoryType) {
 
   if (error) throw error;
   return data as Category;
+}
+
+function categoryTypeForTransaction(type: TransactionType): CategoryType {
+  return type === "income" ? "income" : "expense";
 }
 
 export async function saveCategory(input: {
@@ -415,6 +432,7 @@ function normalizeTransactionInput(input: TransactionInput) {
     from_account_id: type === "transfer" ? input.from_account_id || null : null,
     to_account_id: type === "transfer" ? input.to_account_id || null : null,
     description: input.description.trim(),
+    include_in_monthly_summary: input.include_in_monthly_summary ?? defaultIncludeInMonthlySummary(type),
     date: input.date
   };
 }
@@ -423,11 +441,11 @@ async function applyBalanceChange(transaction: Transaction, mode: "apply" | "rev
   const amount = Number(transaction.amount || 0);
   const direction = mode === "apply" ? 1 : -1;
 
-  if (transaction.type === "income" && transaction.account_id) {
+  if ((transaction.type === "income" || transaction.type === "third_party") && transaction.account_id) {
     await incrementAccountBalance(transaction.account_id, amount * direction);
   }
 
-  if (transaction.type === "expense" && transaction.account_id) {
+  if ((transaction.type === "expense" || transaction.type === "investment" || transaction.type === "reimbursable") && transaction.account_id) {
     await incrementAccountBalance(transaction.account_id, -amount * direction);
   }
 
@@ -472,6 +490,7 @@ export async function importTransactions(
     account_name?: string;
     from_account_name?: string;
     to_account_name?: string;
+    include_in_monthly_summary?: boolean;
   }>
 ) {
   await ensureDefaults();
@@ -501,7 +520,8 @@ export async function importTransactions(
 
   for (const row of rows) {
     const amount = Math.abs(Number(row.amount));
-    const category = row.type === "transfer" ? null : await getOrCreateCategory(row.category || "Outros", row.type as CategoryType);
+    const categoryType = categoryTypeForTransaction(row.type);
+    const category = row.type === "transfer" ? null : await getOrCreateCategory(row.category || "Outros", categoryType);
     const account = row.type === "transfer" ? null :
       findAccountByName(accounts, row.account_name) ||
       fallbackAccount;
@@ -551,6 +571,7 @@ export async function importTransactions(
       from_account_id: fromAccount?.id || null,
       to_account_id: toAccount?.id || null,
       description: row.description.trim() || "Movimento importado",
+      include_in_monthly_summary: row.include_in_monthly_summary ?? defaultIncludeInMonthlySummary(row.type),
       date: row.date
     };
     preparedRows.push(preparedRow);

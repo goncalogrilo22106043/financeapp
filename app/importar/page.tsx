@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { expenseCategories, incomeCategories } from "@/lib/constants";
+import { defaultIncludeInMonthlySummary } from "@/lib/finance";
 import {
   fetchAccounts,
   fetchAllTransactions,
@@ -69,6 +70,7 @@ type PreviewRow = {
   transferDecision?: "suggested" | "confirmed" | "ignored";
   ruleId?: string;
   learnedRule?: boolean;
+  includeInMonthlySummary: boolean;
   needsReview: boolean;
 };
 
@@ -167,15 +169,15 @@ export default function ImportPage() {
     [rows]
   );
   const selectedIncome = useMemo(
-    () => selectedRows.filter((row) => row.type === "income" && !isReimbursementRow(row)),
+    () => selectedRows.filter((row) => row.type === "income" && row.includeInMonthlySummary),
     [selectedRows]
   );
   const selectedReimbursements = useMemo(
-    () => selectedRows.filter((row) => row.type === "income" && isReimbursementRow(row)),
+    () => selectedRows.filter((row) => row.type === "reimbursable" || (!row.includeInMonthlySummary && row.type === "income")),
     [selectedRows]
   );
   const selectedExpenses = useMemo(
-    () => selectedRows.filter((row) => row.type === "expense"),
+    () => selectedRows.filter((row) => row.type === "expense" && row.includeInMonthlySummary),
     [selectedRows]
   );
   const selectedTransfers = useMemo(
@@ -332,6 +334,7 @@ export default function ImportPage() {
               ...item,
               type: "transfer",
               category: "Transferência",
+              includeInMonthlySummary: false,
               selected: item.id === row.id ? true : false,
               reason: item.id === row.id ? "Transferência confirmada" : "Ligada à transferência confirmada",
               transferDecision: "confirmed",
@@ -359,6 +362,7 @@ export default function ImportPage() {
           category: suggestion.category,
           confidence: Math.min(item.confidence, 75),
           reason: suggestion.reason,
+          includeInMonthlySummary: defaultIncludeInMonthlySummary(type),
           learnedRule: false,
           ruleId: undefined,
           needsReview: false,
@@ -431,7 +435,8 @@ export default function ImportPage() {
             description: row.description,
             date: row.date,
             from_account_name: row.fromAccountName,
-            to_account_name: row.toAccountName
+            to_account_name: row.toAccountName,
+            include_in_monthly_summary: false
           };
         }
 
@@ -441,7 +446,8 @@ export default function ImportPage() {
           category: row.category || "Outros",
           description: row.description,
           date: row.date,
-          account_name: row.accountName
+          account_name: row.accountName,
+          include_in_monthly_summary: row.includeInMonthlySummary
         };
       });
 
@@ -468,6 +474,7 @@ export default function ImportPage() {
         merchant_pattern: deriveMerchantPattern(row.description),
         transaction_type: row.type,
         category: row.type === "transfer" ? null : row.category,
+        include_in_monthly_summary: row.includeInMonthlySummary,
         confidence: row.type === "transfer" ? 98 : 96
       }))
       .filter((rule) => rule.merchant_pattern.length >= 3);
@@ -953,6 +960,14 @@ function PreviewItem({
                 Dividido por 2
               </span>
             ) : null}
+            <span className={cn(
+              "rounded-full px-3 py-1",
+              row.includeInMonthlySummary
+                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "bg-slate-500/10 text-slate-500"
+            )}>
+              {row.includeInMonthlySummary ? "Entra no resumo" : "Fora do resumo"}
+            </span>
           </div>
 
           {row.duplicate ? (
@@ -979,6 +994,7 @@ function PreviewItem({
                     type: "income",
                     signedAmount: row.amount,
                     category: defaultCategoryForType("income", categoryOptions),
+                    includeInMonthlySummary: true,
                     learnedRule: false,
                     ruleId: undefined,
                     needsReview: false
@@ -992,9 +1008,10 @@ function PreviewItem({
                 variant="outline"
                 onClick={() =>
                   onUpdate(row.id, {
-                    type: "income",
+                    type: "third_party",
                     signedAmount: row.amount,
-                    category: resolveCategoryName("Reembolsos", "income", categoryOptions),
+                    category: defaultCategoryForType("third_party", categoryOptions),
+                    includeInMonthlySummary: false,
                     learnedRule: false,
                     ruleId: undefined,
                     needsReview: false
@@ -1011,6 +1028,7 @@ function PreviewItem({
                     type: "expense",
                     signedAmount: -row.amount,
                     category: defaultCategoryForType("expense", categoryOptions),
+                    includeInMonthlySummary: true,
                     learnedRule: false,
                     ruleId: undefined,
                     needsReview: false
@@ -1031,6 +1049,7 @@ function PreviewItem({
                   type: nextType,
                   category: defaultCategoryForType(nextType, categoryOptions),
                   signedAmount: nextType === "income" ? row.amount : nextType === "expense" ? -row.amount : row.originalSignedAmount,
+                  includeInMonthlySummary: defaultIncludeInMonthlySummary(nextType),
                   learnedRule: false,
                   ruleId: undefined,
                   needsReview: false,
@@ -1048,6 +1067,9 @@ function PreviewItem({
               <option value="expense">Despesa</option>
               <option value="income">Receita</option>
               <option value="transfer">Transferência</option>
+              <option value="third_party">Dinheiro de terceiros</option>
+              <option value="investment">Investimento</option>
+              <option value="reimbursable">Reembolsável</option>
             </Select>
 
             {row.type === "transfer" ? (
@@ -1067,9 +1089,10 @@ function PreviewItem({
                         variant="secondary"
                         onClick={() =>
                           onUpdate(row.id, {
-                            type: "income",
+                            type: "third_party",
                             signedAmount: row.amount,
-                            category: resolveCategoryName("Reembolsos", "income", categoryOptions),
+                            category: defaultCategoryForType("third_party", categoryOptions),
+                            includeInMonthlySummary: false,
                             fromAccountName: undefined,
                             toAccountName: undefined,
                             linkedTransferId: undefined,
@@ -1091,6 +1114,7 @@ function PreviewItem({
                             type: "income",
                             signedAmount: row.amount,
                             category: defaultCategoryForType("income", categoryOptions),
+                            includeInMonthlySummary: true,
                             fromAccountName: undefined,
                             toAccountName: undefined,
                             linkedTransferId: undefined,
@@ -1112,6 +1136,7 @@ function PreviewItem({
                             type: "expense",
                             signedAmount: -row.amount,
                             category: defaultCategoryForType("expense", categoryOptions),
+                            includeInMonthlySummary: true,
                             fromAccountName: undefined,
                             toAccountName: undefined,
                             linkedTransferId: undefined,
@@ -1135,9 +1160,10 @@ function PreviewItem({
                     variant="outline"
                     onClick={() =>
                       onUpdate(row.id, {
-                        type: "income",
+                        type: "third_party",
                         signedAmount: row.amount,
-                        category: resolveCategoryName("Reembolsos", "income", categoryOptions),
+                        category: defaultCategoryForType("third_party", categoryOptions),
+                        includeInMonthlySummary: false,
                         fromAccountName: undefined,
                         toAccountName: undefined,
                         linkedTransferId: undefined,
@@ -1175,14 +1201,28 @@ function PreviewItem({
           </div>
 
           {row.type !== "transfer" ? (
-            <Button
-              className="mt-3 w-full"
-              size="sm"
-              variant={row.splitWithPartner ? "secondary" : "outline"}
-              onClick={() => onSplit(row)}
-            >
-              {row.splitWithPartner ? "Usar valor inteiro" : "Dividir por 2"}
-            </Button>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <Button
+                className="w-full"
+                size="sm"
+                variant={row.splitWithPartner ? "secondary" : "outline"}
+                onClick={() => onSplit(row)}
+              >
+                {row.splitWithPartner ? "Usar valor inteiro" : "Dividir por 2"}
+              </Button>
+              <Button
+                className="w-full"
+                size="sm"
+                variant={row.includeInMonthlySummary ? "secondary" : "outline"}
+                onClick={() => onUpdate(row.id, {
+                  includeInMonthlySummary: !row.includeInMonthlySummary,
+                  learnedRule: false,
+                  ruleId: undefined
+                })}
+              >
+                {row.includeInMonthlySummary ? "Tirar do resumo" : "Incluir no resumo"}
+              </Button>
+            </div>
           ) : null}
 
           {row.type === "transfer" ? (
@@ -1271,10 +1311,15 @@ function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions, rules:
     const transferSuggestion = ruleSuggestion?.type === "transfer"
       ? ruleSuggestion
       : suggestStandaloneTransfer(file.accountName, description, roundedSignedAmount);
-    const finalType = ruleSuggestion?.type || transferSuggestion?.type || suggestedType;
+    const reimbursementSuggestion = !ruleSuggestion && !transferSuggestion && roundedSignedAmount > 0 &&
+      (looksLikeIncomingReimbursement(normalizeValue(description)) || matchesAny(normalizeValue(description), ["refund", "reembolso", "devolucao", "devolução"]));
+    const finalType = reimbursementSuggestion ? "third_party" : ruleSuggestion?.type || transferSuggestion?.type || suggestedType;
     const finalCategory = ruleSuggestion?.category || transferSuggestion?.category || categorySuggestion.category;
     const finalConfidence = ruleSuggestion?.confidence || transferSuggestion?.confidence || categorySuggestion.confidence;
     const finalReason = ruleSuggestion?.reason || transferSuggestion?.reason || categorySuggestion.reason;
+    const includeInMonthlySummary = reimbursementSuggestion
+      ? false
+      : (ruleSuggestion?.includeInMonthlySummary ?? defaultIncludeInMonthlySummary(finalType));
 
     parsedRows.push({
       id: `${file.id}-${index}-${date}-${roundedSignedAmount}`,
@@ -1302,6 +1347,7 @@ function rowsFromFile(file: ImportFile, categoryOptions: CategoryOptions, rules:
       transferDecision: transferSuggestion && !ruleSuggestion ? "suggested" : undefined,
       ruleId: ruleSuggestion?.ruleId,
       learnedRule: Boolean(ruleSuggestion),
+      includeInMonthlySummary,
       needsReview: !ruleSuggestion
     });
   });
@@ -1560,7 +1606,7 @@ function applyLearnedRule(
 
   const category = type === "transfer"
     ? "Transferência"
-    : resolveCategoryName(rule.categories?.name || "Outros", type, categoryOptions);
+    : resolveCategoryName(rule.categories?.name || "Outros", categoryTypeForTransaction(type), categoryOptions);
   const transfer = type === "transfer"
     ? inferTransferFromRule(accountName, description, signedAmount)
     : null;
@@ -1573,6 +1619,7 @@ function applyLearnedRule(
     confidence: Math.min(100, Math.max(rule.confidence || 90, match.score)),
     reason: `Regra aprendida: ${rule.merchant_pattern}`,
     ruleId: rule.id,
+    includeInMonthlySummary: rule.include_in_monthly_summary ?? defaultIncludeInMonthlySummary(type),
     fromAccountName: transfer?.fromAccountName,
     toAccountName: transfer?.toAccountName
   };
@@ -1727,6 +1774,7 @@ function transferSuggestion(reason: string, fromAccountName: string, toAccountNa
     category: "Transferência",
     confidence,
     reason,
+    includeInMonthlySummary: false,
     fromAccountName,
     toAccountName
   };
@@ -1803,6 +1851,7 @@ function detectInternalTransfers(rows: PreviewRow[]) {
     negative.type = "transfer";
     negative.suggestedType = "transfer";
     negative.category = "Transferência";
+    negative.includeInMonthlySummary = false;
     negative.confidence = 94;
     negative.reason = "Possível transferência interna";
     negative.transferGroupId = groupId;
@@ -1814,6 +1863,7 @@ function detectInternalTransfers(rows: PreviewRow[]) {
     positive.type = "transfer";
     positive.suggestedType = "transfer";
     positive.category = "Transferência";
+    positive.includeInMonthlySummary = false;
     positive.confidence = 94;
     positive.reason = "Ligada à transferência anterior";
     positive.transferGroupId = groupId;
@@ -1916,11 +1966,15 @@ function resolveCategoryName(category: string, type: CategoryType, categoryOptio
 
 function defaultCategoryForType(type: TransactionType, categoryOptions: CategoryOptions) {
   if (type === "transfer") return "Transferência";
-  return resolveCategoryName("Outros", type, categoryOptions);
+  return resolveCategoryName("Outros", categoryTypeForTransaction(type), categoryOptions);
 }
 
 function isReimbursementRow(row: PreviewRow) {
-  return normalizeValue(row.category) === "reembolsos";
+  return row.type === "reimbursable" || row.includeInMonthlySummary === false;
+}
+
+function categoryTypeForTransaction(type: TransactionType): CategoryType {
+  return type === "income" ? "income" : "expense";
 }
 
 function deriveMerchantPattern(description: string) {

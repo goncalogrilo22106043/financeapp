@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Sheet } from "@/components/ui/sheet";
+import { defaultIncludeInMonthlySummary } from "@/lib/finance";
 import { saveTransaction } from "@/lib/supabase/queries";
-import type { Account, Category, Transaction, TransactionType } from "@/lib/types";
+import type { Account, Category, CategoryType, Transaction, TransactionType } from "@/lib/types";
 import { cn, dateForInput } from "@/lib/utils";
 
 type FormState = {
@@ -17,6 +18,7 @@ type FormState = {
   from_account_id: string;
   to_account_id: string;
   description: string;
+  include_in_monthly_summary: boolean;
   date: string;
 };
 
@@ -28,6 +30,7 @@ const initialForm: FormState = {
   from_account_id: "",
   to_account_id: "",
   description: "",
+  include_in_monthly_summary: true,
   date: dateForInput()
 };
 
@@ -49,7 +52,7 @@ export function TransactionSheet({
   const [form, setForm] = useState<FormState>(initialForm);
   const [saving, setSaving] = useState(false);
   const visibleCategories = useMemo(
-    () => categories.filter((category) => category.type === form.type),
+    () => categories.filter((category) => category.type === categoryTypeFor(form.type)),
     [categories, form.type]
   );
 
@@ -66,6 +69,7 @@ export function TransactionSheet({
         from_account_id: transaction.from_account_id || firstAccount,
         to_account_id: transaction.to_account_id || secondAccount,
         description: transaction.description || "",
+        include_in_monthly_summary: transaction.include_in_monthly_summary !== false,
         date: transaction.date
       });
       return;
@@ -76,6 +80,7 @@ export function TransactionSheet({
       account_id: firstAccount,
       from_account_id: firstAccount,
       to_account_id: secondAccount,
+      include_in_monthly_summary: defaultIncludeInMonthlySummary(initialForm.type),
       category_id: categories.find((category) => category.type === initialForm.type)?.id || ""
     });
   }, [accounts, categories, transaction, open]);
@@ -105,6 +110,7 @@ export function TransactionSheet({
         from_account_id: form.type === "transfer" ? form.from_account_id : null,
         to_account_id: form.type === "transfer" ? form.to_account_id : null,
         description: form.description,
+        include_in_monthly_summary: form.include_in_monthly_summary,
         date: form.date
       });
       onSaved();
@@ -121,8 +127,8 @@ export function TransactionSheet({
       onClose={onClose}
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
-        <div className="grid grid-cols-3 gap-2 rounded-3xl bg-muted p-1">
-          {(["expense", "income", "transfer"] as TransactionType[]).map((type) => (
+        <div className="grid grid-cols-2 gap-2 rounded-3xl bg-muted p-1 sm:grid-cols-3">
+          {(["expense", "income", "transfer", "third_party", "investment", "reimbursable"] as TransactionType[]).map((type) => (
             <button
               className={cn(
                 "h-12 rounded-[1.35rem] text-sm font-bold transition",
@@ -130,9 +136,14 @@ export function TransactionSheet({
               )}
               key={type}
               type="button"
-              onClick={() => setForm((current) => ({ ...current, type }))}
+              onClick={() => setForm((current) => ({
+                ...current,
+                type,
+                category_id: categories.find((category) => category.type === categoryTypeFor(type))?.id || "",
+                include_in_monthly_summary: defaultIncludeInMonthlySummary(type)
+              }))}
             >
-              {type === "income" ? "Receita" : type === "expense" ? "Despesa" : "Transfer."}
+              {typeLabel(type)}
             </button>
           ))}
         </div>
@@ -190,7 +201,7 @@ export function TransactionSheet({
             </label>
             <AccountSelect
               accounts={accounts}
-              label={form.type === "income" ? "Conta onde entrou" : "Conta de onde saiu"}
+              label={form.type === "income" || form.type === "third_party" ? "Conta onde entrou" : "Conta de onde saiu"}
               value={form.account_id}
               onChange={(value) => setForm((current) => ({ ...current, account_id: value }))}
             />
@@ -222,12 +233,48 @@ export function TransactionSheet({
           </p>
         ) : null}
 
+        {form.type !== "transfer" ? (
+          <label className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 p-4">
+            <span>
+              <span className="block text-sm font-semibold">Incluir no resumo mensal</span>
+              <span className="text-xs text-muted-foreground">
+                Só receitas e despesas reais devem entrar nos totais do mês.
+              </span>
+            </span>
+            <input
+              checked={form.include_in_monthly_summary}
+              className="h-5 w-5 accent-emerald-600"
+              type="checkbox"
+              onChange={(event) => setForm((current) => ({
+                ...current,
+                include_in_monthly_summary: event.target.checked
+              }))}
+            />
+          </label>
+        ) : null}
+
         <Button className="w-full" disabled={saving || !accounts.length} size="lg" type="submit">
           {saving ? "A guardar..." : "Guardar movimento"}
         </Button>
       </form>
     </Sheet>
   );
+}
+
+function categoryTypeFor(type: TransactionType): CategoryType {
+  return type === "income" ? "income" : "expense";
+}
+
+function typeLabel(type: TransactionType) {
+  const labels = {
+    income: "Receita",
+    expense: "Despesa",
+    transfer: "Transfer.",
+    third_party: "Terceiros",
+    investment: "Invest.",
+    reimbursable: "Reemb."
+  };
+  return labels[type];
 }
 
 function AccountSelect({
